@@ -1060,7 +1060,9 @@ class ZmqTest inherits QUnit::Test {
         assertThrows("ZMQ-Z85-DECODE-ERROR", \zmq_z85_decode(), "1234");  # 4 chars
 
         # negative test - length divisible by 5 but contains invalid char
-        assertThrows("ZMQ-Z85-DECODE-ERROR", \zmq_z85_decode(), "12345678901234567890123456789012345678X");  # contains invalid char
+        # Z85 uses: 0-9, a-z, A-Z, .-:+=^!/*?&<>()[]{}@%$#
+        # Space is not a valid Z85 character
+        assertThrows("ZMQ-Z85-DECODE-ERROR", \zmq_z85_decode(), "0000 ");  # 5 chars, length ok but contains invalid char ' '
 
         # corner case - empty string returns error (not valid Z85)
         assertThrows("ZMQ-Z85-DECODE-ERROR", \zmq_z85_decode(), "");

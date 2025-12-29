@@ -2132,6 +2132,8 @@ if (!exists msg) {
     // set new timeout
     int new_timeout = timeout_ms;
     if (zsock->setSocketOption(ZMQ_RCVTIMEO, &new_timeout, sizeof(new_timeout))) {
+        // best-effort restore of original timeout
+        zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
         zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error setting receive timeout in ZSocket::tryRecvMsg()");
         return QoreValue();
     }
@@ -2197,6 +2199,8 @@ if (!exists frame) {
     // set new timeout
     int new_timeout = timeout_ms;
     if (zsock->setSocketOption(ZMQ_RCVTIMEO, &new_timeout, sizeof(new_timeout))) {
+        // best-effort restore of original timeout
+        zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
         zmq_error(xsink, "ZSOCKET-RECVFRAME-ERROR", "error setting receive timeout in ZSocket::tryRecvFrame()");
         return QoreValue();
     }
