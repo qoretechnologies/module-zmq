@@ -43,13 +43,22 @@
 #define _Q_HAVE_ZMQ_DRAFT_APIS 0
 #endif
 
+#ifdef HAVE_ZMQ_PROXY_STEERABLE
+#define _Q_HAVE_ZMQ_PROXY_STEERABLE 1
+#else
+#define _Q_HAVE_ZMQ_PROXY_STEERABLE 0
+#endif
+
 /** @defgroup zmq_option_constants zmq Module Option Constants
 */
 ///@{
 namespace Qore::ZMQ;
-//! indicates if the @ref Qore::ZMQ::ZFrame::meta() "ZFrame::meta()" function is avialable or not
+//! indicates if the @ref Qore::ZMQ::ZFrame::meta() "ZFrame::meta()" function is available or not
 const HAVE_ZFRAME_META = bool(_Q_ZFRAME_META);
 
 //! indicates if draft APIs are available or not
 const HAVE_ZMQ_DRAFT_APIS = bool(_Q_HAVE_ZMQ_DRAFT_APIS);
+
+//! indicates if the @ref Qore::ZMQ::ZSocket::proxySteerable() "ZSocket::proxySteerable()" function is available or not
+const HAVE_ZMQ_PROXY_STEERABLE = bool(_Q_HAVE_ZMQ_PROXY_STEERABLE);
 ///@}

@@ -28,7 +28,7 @@
 
 #include "QC_ZSocket.h"
 
-class QoreRadioZSock : public QoreZSockBind {
+class QoreRadioZSock : public QoreZSockConnect {
 public:
    // creates the object
    DLLLOCAL QoreRadioZSock(QoreZContext& ctx, const char* endpoint, ExceptionSink* xsink) : QoreZSockConnect(ctx, ZMQ_RADIO, endpoint, xsink) {

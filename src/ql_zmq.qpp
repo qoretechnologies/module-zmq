@@ -163,4 +163,40 @@ string zmq_z85_encode(binary data) [flags=RET_VALUE_ONLY] {
     str->terminate(len);
     return str.release();
 }
+
+//! Decodes a Z85 encoded string to binary
+/** @par Example:
+    @code{.py}
+binary key = zmq_z85_decode(z85_key);
+    @endcode
+
+    @param encoded a Z85 encoded string with a length divisible by 5
+
+    @return binary data corresponding to the decoded string
+
+    @throw ZMQ-Z85-DECODE-ERROR an error was generated calling \c zmq_z85_decode()
+
+    @note Curve keys should be 40 characters long (decodes to 32 bytes)
+
+    @see zmq_z85_encode()
+*/
+binary zmq_z85_decode(string encoded) [flags=RET_VALUE_ONLY] {
+    // ensure that the size is evenly divisible by 5
+    size_t len = encoded->size();
+    if (len % 5 != 0) {
+        xsink->raiseException("ZMQ-Z85-DECODE-ERROR", "the argument's size (%ld) is not evenly divisible by 5", len);
+        return QoreValue();
+    }
+    // output size is 4/5 of input size
+    size_t out_len = len * 4 / 5;
+    SimpleRefHolder<BinaryNode> bin(new BinaryNode);
+    bin->preallocate(out_len);
+    uint8_t* p = zmq_z85_decode((uint8_t*)bin->getPtr(), encoded->c_str());
+    if (!p) {
+        xsink->raiseException("ZMQ-Z85-DECODE-ERROR", "zmq_z85_decode() returned an error; invalid Z85 input");
+        return QoreValue();
+    }
+    bin->setSize(out_len);
+    return bin.release();
+}
 ///@}

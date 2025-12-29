@@ -54,12 +54,12 @@ DLLLOCAL QoreClass* initZSocketStreamClass(QoreNamespace& ns);
 #ifdef QORE_BUILD_ZMQ_DRAFT
 DLLLOCAL QoreClass* initZSocketServerClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initZSocketClientClass(QoreNamespace& ns);
-#endif
-//DLLLOCAL QoreClass* initZSocketRadioClass(QoreNamespace& ns);
-//DLLLOCAL QoreClass* initZSocketDishClass(QoreNamespace& ns);
+DLLLOCAL QoreClass* initZSocketRadioClass(QoreNamespace& ns);
+DLLLOCAL QoreClass* initZSocketDishClass(QoreNamespace& ns);
 //DLLLOCAL QoreClass* initZSocketScatterClass(QoreNamespace& ns);
 //DLLLOCAL QoreClass* initZSocketGatherClass(QoreNamespace& ns);
 //DLLLOCAL QoreClass* initZSocketDGramClass(QoreNamespace& ns);
+#endif
 DLLLOCAL QoreClass* initZFrameClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initZMsgClass(QoreNamespace& ns);
 
@@ -112,8 +112,8 @@ static QoreStringNode* zmq_module_init() {
 #ifdef QORE_BUILD_ZMQ_DRAFT
     zmqns.addSystemClass(initZSocketServerClass(zmqns));
     zmqns.addSystemClass(initZSocketClientClass(zmqns));
-    //zmqns.addSystemClass(initZSocketRadioClass(zmqns));
-    //zmqns.addSystemClass(initZSocketDishClass(zmqns));
+    zmqns.addSystemClass(initZSocketRadioClass(zmqns));
+    zmqns.addSystemClass(initZSocketDishClass(zmqns));
     //zmqns.addSystemClass(initZSocketScatterClass(zmqns));
     //zmqns.addSystemClass(initZSocketGatherClass(zmqns));
     //zmqns.addSystemClass(initZSocketDGramClass(zmqns));

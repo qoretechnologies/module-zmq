@@ -3,8 +3,8 @@ cmake_minimum_required(VERSION 2.8.12)
 project(qore-zmq-module)
 
 set (VERSION_MAJOR 1)
-set (VERSION_MINOR 0)
-set (VERSION_PATCH 2)
+set (VERSION_MINOR 1)
+set (VERSION_PATCH 0)
 
 set(PROJECT_VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")
 
@@ -50,8 +50,6 @@ set(QPP_SRC
     src/QC_ZSocketXSub.qpp
     src/QC_ZSocketPair.qpp
     src/QC_ZSocketStream.qpp
-    #src/QC_ZSocketRadio.qpp
-    #src/QC_ZSocketDish.qpp
     src/QC_ZFrame.qpp
     src/QC_ZMsg.qpp
     src/qc_zmq.qpp
@@ -62,6 +60,8 @@ if (QORE_BUILD_ZMQ_DRAFT)
     set(QPP_SRC ${QPP_SRC}
         src/QC_ZSocketServer.qpp
         src/QC_ZSocketClient.qpp
+        src/QC_ZSocketRadio.qpp
+        src/QC_ZSocketDish.qpp
     )
     SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DQORE_BUILD_ZMQ_DRAFT=1")
 endif (QORE_BUILD_ZMQ_DRAFT)

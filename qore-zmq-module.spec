@@ -6,7 +6,7 @@
 %global user_module_dir %{mydatarootdir}/qore-modules/
 
 Name:           qore-zmq-module
-Version:        1.0.2
+Version:        1.1.0
 Release:        1
 Summary:        Qorus Integration Engine - Qore zmq module
 License:        MIT
@@ -67,6 +67,19 @@ zmq module.
 %doc docs/zmq test
 
 %changelog
+* Sun Dec 29 2024 David Nichols <david@qore.org>
+- updated to v1.1.0
+- added ZFrame::readi2N(), readi4N(), readi8N() for network byte order reading
+- added ZSocket::tryRecvMsg(), tryRecvFrame() for non-blocking receive
+- added ZSocket::hasMore() to check for additional message parts
+- added ZSocket::setRecvHighWaterMark(), setSendHighWaterMark()
+- added ZSocket::proxySteerable() for steerable proxy support
+- added zmq_z85_decode() function
+- added HAVE_ZMQ_PROXY_STEERABLE constant
+- fixed exception name in ZFrame::readi4()
+- fixed boundary checks in ZFrame read methods
+- fixed string option handling in ZSocket::getOption()
+
 * Tue Dec 20 2022 David Nichols <david@qore.org>
 - updated to v1.0.2
 

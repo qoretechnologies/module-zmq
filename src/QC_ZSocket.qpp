@@ -1681,7 +1681,8 @@ auto ZSocket::getOption(int opt, int bufsize = 100) [flags=RET_VALUE_ONLY] {
             size_t len = bufsize + 1;
             rc = zsock->getSocketOption(opt, (void*)str->c_str(), &len);
             if (!rc) {
-                str->terminate(len);
+                // ZMQ includes null terminator in len for string options
+                str->terminate(len > 0 ? len - 1 : 0);
                 rv = str.release();
             }
             break;
@@ -2093,6 +2094,136 @@ ZMsg ZSocket::recvMsg() {
     return new QoreObject(QC_ZMSG, getProgram(), new QoreZMsg(msg));
 }
 
+//! Tries to receive a message from the socket, returning NOTHING on timeout
+/** @par Example:
+    @code{.py}
+*ZMsg msg = zsock.tryRecvMsg(1s);
+if (!exists msg) {
+    # timeout occurred
+}
+    @endcode
+
+    @param timeout_ms the timeout in milliseconds; like all %Qore functions and methods taking timeout values, a @ref relative_dates "relative date/time value" can be used to make the units clear (i.e. \c 2m = two minutes, etc.)
+
+    @return the message received from the socket, or @ref nothing if a timeout occurs
+
+    This method is useful for polling patterns where you want to check for messages
+    without blocking indefinitely.
+
+    @throw ZSOCKET-RECVMSG-ERROR thrown if an error occurs during the call (other than timeout)
+    @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a non-thread-safe socket and a thread other than the thread where the object was created
+    @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
+
+    @see recvMsg()
+*/
+*ZMsg ZSocket::tryRecvMsg(timeout timeout_ms) {
+    // enforce access from the correct thread
+    if (zsock->check(xsink))
+        return QoreValue();
+
+    // save current timeout
+    int old_timeout;
+    size_t len = sizeof(old_timeout);
+    if (zsock->getSocketOption(ZMQ_RCVTIMEO, &old_timeout, &len)) {
+        zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error getting receive timeout in ZSocket::tryRecvMsg()");
+        return QoreValue();
+    }
+
+    // set new timeout
+    int new_timeout = timeout_ms;
+    if (zsock->setSocketOption(ZMQ_RCVTIMEO, &new_timeout, sizeof(new_timeout))) {
+        zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error setting receive timeout in ZSocket::tryRecvMsg()");
+        return QoreValue();
+    }
+
+    zmsg_t* msg;
+    int recv_errno;
+    while (true) {
+        msg = zmsg_recv(**zsock);
+        recv_errno = errno;  // save errno immediately after zmsg_recv
+        if (!msg) {
+            if (recv_errno == EINTR)
+                continue;
+            // restore old timeout
+            zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+            if (recv_errno == EAGAIN)
+                return QoreValue();  // timeout - return NOTHING
+            errno = recv_errno;  // restore errno for zmq_error
+            zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error in ZSocket::tryRecvMsg()");
+            return QoreValue();
+        }
+        break;
+    }
+    // restore old timeout
+    zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+    return new QoreObject(QC_ZMSG, getProgram(), new QoreZMsg(msg));
+}
+
+//! Tries to receive a frame from the socket, returning NOTHING on timeout
+/** @par Example:
+    @code{.py}
+*ZFrame frame = zsock.tryRecvFrame(1s);
+if (!exists frame) {
+    # timeout occurred
+}
+    @endcode
+
+    @param timeout_ms the timeout in milliseconds; like all %Qore functions and methods taking timeout values, a @ref relative_dates "relative date/time value" can be used to make the units clear (i.e. \c 2m = two minutes, etc.)
+
+    @return the frame received from the socket, or @ref nothing if a timeout occurs
+
+    This method is useful for polling patterns where you want to check for frames
+    without blocking indefinitely.
+
+    @throw ZSOCKET-RECVFRAME-ERROR thrown if an error occurs during the call (other than timeout)
+    @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
+    @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
+
+    @see recvFrame()
+*/
+*ZFrame ZSocket::tryRecvFrame(timeout timeout_ms) {
+    // enforce access from the correct thread
+    if (zsock->check(xsink))
+        return QoreValue();
+
+    // save current timeout
+    int old_timeout;
+    size_t len = sizeof(old_timeout);
+    if (zsock->getSocketOption(ZMQ_RCVTIMEO, &old_timeout, &len)) {
+        zmq_error(xsink, "ZSOCKET-RECVFRAME-ERROR", "error getting receive timeout in ZSocket::tryRecvFrame()");
+        return QoreValue();
+    }
+
+    // set new timeout
+    int new_timeout = timeout_ms;
+    if (zsock->setSocketOption(ZMQ_RCVTIMEO, &new_timeout, sizeof(new_timeout))) {
+        zmq_error(xsink, "ZSOCKET-RECVFRAME-ERROR", "error setting receive timeout in ZSocket::tryRecvFrame()");
+        return QoreValue();
+    }
+
+    zframe_t* frm;
+    int recv_errno;
+    while (true) {
+        frm = zframe_recv(**zsock);
+        recv_errno = errno;  // save errno immediately after zframe_recv
+        if (!frm) {
+            if (recv_errno == EINTR)
+                continue;
+            // restore old timeout
+            zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+            if (recv_errno == EAGAIN)
+                return QoreValue();  // timeout - return NOTHING
+            errno = recv_errno;  // restore errno for zmq_error
+            zmq_error(xsink, "ZSOCKET-RECVFRAME-ERROR", "error in ZSocket::tryRecvFrame()");
+            return QoreValue();
+        }
+        break;
+    }
+    // restore old timeout
+    zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+    return new QoreObject(QC_ZFRAME, getProgram(), new QoreZFrame(frm));
+}
+
 //! Sets the receive high water mark
 /** @par Example:
     @code{.py}
@@ -2125,6 +2256,40 @@ zsock.setRecvHighWaterMark(2000);
     int v = value;
     if (zsock->setSocketOption(ZMQ_RCVHWM, &v, sizeof v))
         zmq_error(xsink, "ZSOCKET-SETRECVHIGHWATERMARK-ERROR", "error in ZSocket::setRecvHighWaterMark()");
+}
+
+//! Sets the send high water mark
+/** @par Example:
+    @code{.py}
+zsock.setSendHighWaterMark(2000);
+    @endcode
+
+    @param value the "high water mark" value which is a hard limit on the maximum number of outstanding messages ØMQ shall queue in memory for any single peer that the specified socket is communicating with; a value of zero means no limit
+
+    If this limit has been reached the socket shall enter an exceptional state and depending on the socket type, ØMQ shall take appropriate action such as blocking or dropping sent messages. Refer to the individual socket descriptions for details on the exact action taken for each socket type.
+
+    <b>0MQ Socket Option Information</b>
+    |!Property|!Description
+    |Option value type|int
+    |Option value unit|messages
+    |Default value|1000
+    |Applicable socket types|all
+
+    @throw ZSOCKET-SETSENDHIGHWATERMARK-ERROR if an error occurs setting the option
+    @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a non-thread-safe socket and a thread other than the thread where the object was created
+    @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
+
+    @see
+    - @ref ZSocket::setRecvHighWaterMark()
+ */
+ nothing ZSocket::setSendHighWaterMark(int value) {
+    // enforce access from the correct thread
+    if (zsock->check(xsink))
+        return QoreValue();
+
+    int v = value;
+    if (zsock->setSocketOption(ZMQ_SNDHWM, &v, sizeof v))
+        zmq_error(xsink, "ZSOCKET-SETSENDHIGHWATERMARK-ERROR", "error in ZSocket::setSendHighWaterMark()");
 }
 
 //! Sets the send timeout in milliseconds
@@ -2516,4 +2681,91 @@ static nothing ZSocket::proxy(ZSocket[QoreZSock] frontend, ZSocket[QoreZSock] ba
     // zmq_proxy() always returns -1 and errno set to EINTR or ETERM with an orderly shutdown
     if (errno != EINTR && errno != ETERM)
         zmq_error(xsink, "ZSOCKET-PROXY-ERROR", "error in ZSocket::proxy()");
+}
+
+#ifdef HAVE_ZMQ_PROXY_STEERABLE
+//! starts the built-in ZeroMQ steerable proxy to connect messages between two sockets
+/** @par Example:
+    @code{.py}
+ZSocketDealer frontend(zctx, "dealer-1", "@tcp://127.0.0.1:*");
+ZSocketRouter backend(zctx, "router-1", ">" + writer.endpoint());
+ZSocketPair control(zctx, "@inproc://proxy-control");
+background ZSocket::proxySteerable(frontend, backend, NOTHING, control);
+
+# later, pause the proxy
+ZSocketPair ctrl(zctx, ">inproc://proxy-control");
+ctrl.send("PAUSE");
+
+# resume
+ctrl.send("RESUME");
+
+# terminate
+ctrl.send("TERMINATE");
+    @endcode
+
+    @param frontend the frontend socket for the proxy
+    @param backend the backend socket for the proxy
+    @param capture an optional capture socket to capture frontend and backend messages
+    @param control the control socket for sending commands (PAUSE, RESUME, TERMINATE)
+
+    @par Description
+    The steerable proxy is similar to the regular proxy but can be paused, resumed, and
+    terminated via the control socket. The control socket receives string commands:
+    - \c "PAUSE" - pause the proxy (messages are not forwarded)
+    - \c "RESUME" - resume the proxy
+    - \c "TERMINATE" - terminate the proxy
+
+    @throw ZSOCKET-PROXY-ERROR error executing the proxy call
+    @throw MISSING-FEATURE-ERROR thrown if the underlying library does not support zmq_proxy_steerable()
+
+    @note only available if the underlying library supports it; check @ref Qore::ZMQ::HAVE_ZMQ_PROXY_STEERABLE "HAVE_ZMQ_PROXY_STEERABLE" before calling this method
+
+    @see proxy()
+*/
+static nothing ZSocket::proxySteerable(ZSocket[QoreZSock] frontend, ZSocket[QoreZSock] backend, *ZSocket[QoreZSock] capture, ZSocket[QoreZSock] control) {
+    ReferenceHolder<QoreZSock> frontend_holder(frontend, xsink);
+    ReferenceHolder<QoreZSock> backend_holder(backend, xsink);
+    ReferenceHolder<QoreZSock> capture_holder(capture, xsink);
+    ReferenceHolder<QoreZSock> control_holder(control, xsink);
+
+    // enforce access from the correct thread
+    if (frontend->check(xsink) || backend->check(xsink) || (capture && capture->check(xsink)) || control->check(xsink))
+        return QoreValue();
+
+    zmq_proxy_steerable(**frontend, **backend, capture ? **capture : nullptr, **control);
+    // zmq_proxy_steerable() always returns -1 and errno set to EINTR or ETERM with an orderly shutdown
+    if (errno != EINTR && errno != ETERM)
+        zmq_error(xsink, "ZSOCKET-PROXY-ERROR", "error in ZSocket::proxySteerable()");
+}
+#endif
+
+//! Returns true if there are more message parts to receive
+/** @par Example:
+    @code{.py}
+ZFrame frame = zsock.recvFrame();
+while (zsock.hasMore()) {
+    frame = zsock.recvFrame();
+}
+    @endcode
+
+    @return @ref True if more message parts are waiting to be received, @ref False otherwise
+
+    This is useful when receiving multipart messages frame by frame.
+
+    @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
+    @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
+*/
+bool ZSocket::hasMore() [flags=CONSTANT] {
+    // enforce access from the correct thread
+    if (zsock->check(xsink))
+        return QoreValue();
+
+    int more;
+    size_t len = sizeof(more);
+    int rc = zsock->getSocketOption(ZMQ_RCVMORE, &more, &len);
+    if (rc < 0) {
+        zmq_error(xsink, "ZSOCKET-HASMORE-ERROR", "error in ZSocket::hasMore()");
+        return QoreValue();
+    }
+    return (bool)more;
 }
