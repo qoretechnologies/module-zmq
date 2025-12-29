@@ -27,6 +27,7 @@
     - @ref Qore::ZMQ::zmq_curve_keypair() "zmq_curve_keypair()"
     - @ref Qore::ZMQ::zmq_curve_public() "zmq_curve_public()"
     - @ref Qore::ZMQ::zmq_version() "zmq_version()"
+    - @ref Qore::ZMQ::zmq_z85_decode() "zmq_z85_decode()"
     - @ref Qore::ZMQ::zmq_z85_encode() "zmq_z85_encode()"
 
     Unlike the ZeroMQ C library which uses an unlimited timeout period on socket send and
@@ -143,6 +144,25 @@ ZMsg msg = server.recvMsg();
     @endcode
 
     @section zmqreleasenotes zmq Module Release Notes
+
+    @subsection zmq_1_1_0 zmq Module Version 1.1.0
+    <b>New Features and Enhancements:</b>
+    - Added @ref Qore::ZMQ::ZFrame::readi2N() "ZFrame::readi2N()": read 16-bit integer in network byte order
+    - Added @ref Qore::ZMQ::ZFrame::readi4N() "ZFrame::readi4N()": read 32-bit integer in network byte order
+    - Added @ref Qore::ZMQ::ZFrame::readi8N() "ZFrame::readi8N()": read 64-bit integer in network byte order
+    - Added @ref Qore::ZMQ::ZSocket::tryRecvMsg() "ZSocket::tryRecvMsg()": non-blocking receive returning \c NOTHING on timeout
+    - Added @ref Qore::ZMQ::ZSocket::tryRecvFrame() "ZSocket::tryRecvFrame()": non-blocking frame receive returning \c NOTHING on timeout
+    - Added @ref Qore::ZMQ::ZSocket::hasMore() "ZSocket::hasMore()": check if more message parts are waiting
+    - Added @ref Qore::ZMQ::ZSocket::setRecvHighWaterMark() "ZSocket::setRecvHighWaterMark()": set receive high water mark
+    - Added @ref Qore::ZMQ::ZSocket::setSendHighWaterMark() "ZSocket::setSendHighWaterMark()": set send high water mark
+    - Added @ref Qore::ZMQ::ZSocket::proxySteerable() "ZSocket::proxySteerable()": steerable proxy with PAUSE/RESUME/TERMINATE support (when available)
+    - Added @ref Qore::ZMQ::zmq_z85_decode() "zmq_z85_decode()": decode Z85-encoded strings to binary
+    - Added @ref Qore::ZMQ::HAVE_ZMQ_PROXY_STEERABLE "HAVE_ZMQ_PROXY_STEERABLE" constant for feature detection
+
+    <b>Bug Fixes:</b>
+    - Fixed exception name from \c ZMSG-READ-ERROR to \c ZFRAME-READ-ERROR in @ref Qore::ZMQ::ZFrame::readi4() "ZFrame::readi4()"
+    - Fixed boundary checks in @ref Qore::ZMQ::ZFrame::readi2() "ZFrame::readi2()", @ref Qore::ZMQ::ZFrame::readi4() "ZFrame::readi4()" to properly handle frames smaller than the read size
+    - Fixed @ref Qore::ZMQ::ZSocket::getOption() "ZSocket::getOption()" for string options to not include null terminator in string length
 
     @subsection zmq_1_0_2 zmq Module Version 1.0.2
     - Updated to build with \c qpp from %Qore 1.12.4+

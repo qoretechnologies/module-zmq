@@ -30,6 +30,12 @@
 #include <zframe.h>
 #include <zmsg.h>
 
+#ifdef _WIN32
+#include <winsock2.h>
+#else
+#include <arpa/inet.h>
+#endif
+
 /** @defgroup zframe_flags ZFrame Send Flags
     These values can be combined with bitwise-or when sending frames on a socket
 */
@@ -237,7 +243,7 @@ bool ZFrame::streq(string str) [flags=CONSTANT] {
    return (bool)zframe_streq(**frame, str->c_str());
 }
 
-//! Reads a signed 16-bit integer from the given offset in the frame
+//! Reads a signed 16-bit integer from the given offset in the frame using native byte order
 /** @par Example:
     @code{.py}
 int i = frame.readi2(0);
@@ -248,11 +254,16 @@ int i = frame.readi2(0);
     @return a signed 16-bit integer at the given position in the frame
 
     @throw ZFRAME-READ-ERROR this exception is thrown when an invalid offset argument is used
+
+    @note This method uses native byte order. For network protocols requiring big-endian
+    (network byte order), use @ref readi2N() instead.
+
+    @see readi2N()
 */
 int ZFrame::readi2(int offset) {
     size_t size = zframe_size(**frame);
-    if (offset < 0 || (offset > (size - 2))) {
-        xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 2 bytes from byte offset" QLLD "; frame size: " QLLD, offset, size);
+    if (offset < 0 || (size < 2) || ((size_t)offset > (size - 2))) {
+        xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 2 bytes from byte offset " QLLD "; frame size: " QLLD, offset, size);
         return QoreValue();
     }
 
@@ -260,7 +271,7 @@ int ZFrame::readi2(int offset) {
     return *((int16_t*)(p + offset));
 }
 
-//! Reads a signed 32-bit integer from the given offset in the frame
+//! Reads a signed 32-bit integer from the given offset in the frame using native byte order
 /** @par Example:
     @code{.py}
 int i = frame.readi4(0);
@@ -271,16 +282,108 @@ int i = frame.readi4(0);
     @return a signed 32-bit integer at the given position in the frame
 
     @throw ZFRAME-READ-ERROR this exception is thrown when an invalid offset argument is used
+
+    @note This method uses native byte order. For network protocols requiring big-endian
+    (network byte order), use @ref readi4N() instead.
+
+    @see readi4N()
 */
 int ZFrame::readi4(int offset) {
     size_t size = zframe_size(**frame);
-    if (offset < 0 || (offset > (size - 4))) {
-        xsink->raiseException("ZMSG-READ-ERROR", "cannot read 4 bytes from byte offset" QLLD "; frame size: " QLLD, offset, size);
+    if (offset < 0 || (size < 4) || ((size_t)offset > (size - 4))) {
+        xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 4 bytes from byte offset " QLLD "; frame size: " QLLD, offset, size);
         return QoreValue();
     }
 
     const char* p = (const char*)zframe_data(**frame);
     return *((int32_t*)(p + offset));
+}
+
+//! Reads a signed 16-bit integer in network byte order (big-endian) from the given offset in the frame
+/** @par Example:
+    @code{.py}
+int i = frame.readi2N(0);
+    @endcode
+
+    @param offset the byte offset in the frame
+
+    @return a signed 16-bit integer at the given position in the frame, converted from network byte order
+
+    @throw ZFRAME-READ-ERROR this exception is thrown when an invalid offset argument is used
+
+    @note This method reads data in network byte order (big-endian) for portable network protocols.
+    Use @ref readi2() for native byte order.
+
+    @see readi2()
+*/
+int ZFrame::readi2N(int offset) {
+    size_t size = zframe_size(**frame);
+    if (offset < 0 || (size < 2) || ((size_t)offset > (size - 2))) {
+        xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 2 bytes from byte offset " QLLD "; frame size: " QLLD, offset, size);
+        return QoreValue();
+    }
+
+    const char* p = (const char*)zframe_data(**frame);
+    return (int16_t)ntohs(*((uint16_t*)(p + offset)));
+}
+
+//! Reads a signed 32-bit integer in network byte order (big-endian) from the given offset in the frame
+/** @par Example:
+    @code{.py}
+int i = frame.readi4N(0);
+    @endcode
+
+    @param offset the byte offset in the frame
+
+    @return a signed 32-bit integer at the given position in the frame, converted from network byte order
+
+    @throw ZFRAME-READ-ERROR this exception is thrown when an invalid offset argument is used
+
+    @note This method reads data in network byte order (big-endian) for portable network protocols.
+    Use @ref readi4() for native byte order.
+
+    @see readi4()
+*/
+int ZFrame::readi4N(int offset) {
+    size_t size = zframe_size(**frame);
+    if (offset < 0 || (size < 4) || ((size_t)offset > (size - 4))) {
+        xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 4 bytes from byte offset " QLLD "; frame size: " QLLD, offset, size);
+        return QoreValue();
+    }
+
+    const char* p = (const char*)zframe_data(**frame);
+    return (int32_t)ntohl(*((uint32_t*)(p + offset)));
+}
+
+//! Reads a signed 64-bit integer in network byte order (big-endian) from the given offset in the frame
+/** @par Example:
+    @code{.py}
+int i = frame.readi8N(0);
+    @endcode
+
+    @param offset the byte offset in the frame
+
+    @return a signed 64-bit integer at the given position in the frame, converted from network byte order
+
+    @throw ZFRAME-READ-ERROR this exception is thrown when an invalid offset argument is used
+
+    @note This method reads data in network byte order (big-endian) for portable network protocols.
+    64-bit network byte order conversion is performed manually for portability.
+*/
+int ZFrame::readi8N(int offset) {
+    size_t size = zframe_size(**frame);
+    if (offset < 0 || (size < 8) || ((size_t)offset > (size - 8))) {
+        xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 8 bytes from byte offset " QLLD "; frame size: " QLLD, offset, size);
+        return QoreValue();
+    }
+
+    const unsigned char* p = (const unsigned char*)zframe_data(**frame) + offset;
+    // Manual conversion from big-endian for 64-bit (ntohll not portable)
+    int64_t result = ((int64_t)p[0] << 56) | ((int64_t)p[1] << 48) |
+                     ((int64_t)p[2] << 40) | ((int64_t)p[3] << 32) |
+                     ((int64_t)p[4] << 24) | ((int64_t)p[5] << 16) |
+                     ((int64_t)p[6] << 8)  | ((int64_t)p[7]);
+    return result;
 }
 
 //! Sends a message to the zsys log sink (may be stdout, or system facility)

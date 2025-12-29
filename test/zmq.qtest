@@ -39,7 +39,19 @@ class ZmqTest inherits QUnit::Test {
         addTestCase("zmsg", \zMsgTest());
         addTestCase("proxy", \proxyTest());
         addTestCase("crypto", \cryptoTest());
-        #addTestCase("draft", \draftTest());
+        addTestCase("frame", \frameTest());
+        addTestCase("socket options", \socketOptionsTest());
+        addTestCase("connection management", \connectionManagementTest());
+        addTestCase("try recv", \tryRecvTest());
+        addTestCase("has more", \hasMoreTest());
+        addTestCase("high water mark", \highWaterMarkTest());
+        addTestCase("z85 decode", \z85DecodeTest());
+        if (HAVE_ZMQ_DRAFT_APIS) {
+            addTestCase("draft", \draftTest());
+        }
+        if (HAVE_ZMQ_PROXY_STEERABLE) {
+            addTestCase("steerable proxy", \steerableProxyTest());
+        }
 
         set_return_value(main());
     }
@@ -706,22 +718,429 @@ class ZmqTest inherits QUnit::Test {
         assertEq("", idframe.meta("Identity"));
     }
 
-    draftTest() {
-        if (!HAVE_ZMQ_DRAFT_APIS) {
-            return;
+    frameTest() {
+        # test native byte order reading
+        {
+            # create a frame with 16-bit value (0x0102)
+            ZFrame frame(<0102>);
+            int i = frame.readi2(0);
+            # value depends on endianness but should read without error
+            assertTrue(i != 0);
         }
 
-        /*
-        # server-client communication not working in any case
-        ZSocketServer server(zctx, "@tcp://127.0.0.1:*");
-        ZSocketClient client(zctx, ">" + server.endpoint());
-        printf("client connected to %y\n", client.endpoint());
+        # test 32-bit native byte order reading
+        {
+            ZFrame frame(<01020304>);
+            int i = frame.readi4(0);
+            assertTrue(i != 0);
+        }
 
-        client.send(HelloWorld);
-        printf("receiving server msg\n");
-        ZMsg msg = server.recvMsg();
-        printf("got msg\n");
-        assertGt(0, msg.routingId());
-        */
+        # test network byte order reading - 16-bit
+        {
+            # 0x0102 in network byte order = 258 decimal
+            ZFrame frame(<0102>);
+            int i = frame.readi2N(0);
+            assertEq(258, i);
+        }
+
+        # test network byte order reading - 32-bit
+        {
+            # 0x01020304 in network byte order = 16909060 decimal
+            ZFrame frame(<01020304>);
+            int i = frame.readi4N(0);
+            assertEq(16909060, i);
+        }
+
+        # test network byte order reading - 64-bit
+        {
+            # 0x0102030405060708 in network byte order
+            ZFrame frame(<0102030405060708>);
+            int i = frame.readi8N(0);
+            assertEq(72623859790382856, i);
+        }
+
+        # test with offset
+        {
+            ZFrame frame(<00000102>);
+            int i = frame.readi2N(2);
+            assertEq(258, i);
+        }
+
+        # negative test - invalid offset for readi2
+        {
+            ZFrame frame(<01>);  # only 1 byte
+            assertThrows("ZFRAME-READ-ERROR", \frame.readi2(), 0);
+        }
+
+        # negative test - invalid offset for readi4
+        {
+            ZFrame frame(<0102>);  # only 2 bytes
+            assertThrows("ZFRAME-READ-ERROR", \frame.readi4(), 0);
+        }
+
+        # negative test - negative offset
+        {
+            ZFrame frame(<0102>);
+            assertThrows("ZFRAME-READ-ERROR", \frame.readi2(), -1);
+        }
+
+        # negative test - invalid offset for readi2N
+        {
+            ZFrame frame(<01>);
+            assertThrows("ZFRAME-READ-ERROR", \frame.readi2N(), 0);
+        }
+
+        # negative test - invalid offset for readi4N
+        {
+            ZFrame frame(<0102>);
+            assertThrows("ZFRAME-READ-ERROR", \frame.readi4N(), 0);
+        }
+
+        # negative test - invalid offset for readi8N
+        {
+            ZFrame frame(<01020304>);
+            assertThrows("ZFRAME-READ-ERROR", \frame.readi8N(), 0);
+        }
+
+        # test frame equality
+        {
+            ZFrame f1(<0102>);
+            ZFrame f2(<0102>);
+            ZFrame f3(<0103>);
+            assertTrue(f1.eq(f2));
+            assertFalse(f1.eq(f3));
+        }
+
+        # test frame size
+        {
+            ZFrame f1(<01020304>);
+            assertEq(4, f1.size());
+        }
+
+        # test frame copy
+        {
+            ZFrame f1(<0102>);
+            ZFrame f2 = f1.copy();
+            assertTrue(f1.eq(f2));
+        }
+
+        # corner case - read at exact boundary (offset = size - 2)
+        {
+            ZFrame frame(<01020304>);  # 4 bytes
+            int i = frame.readi2N(2);  # read last 2 bytes
+            assertEq(772, i);  # 0x0304 = 772
+        }
+
+        # corner case - read at exact boundary for 32-bit
+        {
+            ZFrame frame(<0102030405060708>);  # 8 bytes
+            int i = frame.readi4N(4);  # read last 4 bytes
+            assertEq(84281096, i);  # 0x05060708
+        }
+
+        # corner case - empty frame
+        {
+            ZFrame frame(binary());
+            assertEq(0, frame.size());
+            assertThrows("ZFRAME-READ-ERROR", \frame.readi2(), 0);
+        }
+
+        # corner case - offset just past valid range
+        {
+            ZFrame frame(<01020304>);  # 4 bytes
+            assertThrows("ZFRAME-READ-ERROR", \frame.readi2(), 3);  # would need bytes 3,4 but only 0-3 exist
+        }
+    }
+
+    socketOptionsTest() {
+        # test integer options
+        {
+            ZSocketPush sock(zctx);
+
+            # set and get linger
+            sock.setOption(ZMQ_LINGER, 100);
+            assertEq(100, sock.getOption(ZMQ_LINGER));
+
+            # set and get backlog
+            sock.setOption(ZMQ_BACKLOG, 50);
+            assertEq(50, sock.getOption(ZMQ_BACKLOG));
+
+            # set and get reconnect interval
+            sock.setOption(ZMQ_RECONNECT_IVL, 200);
+            assertEq(200, sock.getOption(ZMQ_RECONNECT_IVL));
+        }
+
+        # test boolean options
+        {
+            ZSocketPush sock(zctx);
+
+            # test IPV6
+            sock.setOption(ZMQ_IPV6, True);
+            assertEq(True, sock.getOption(ZMQ_IPV6));
+            sock.setOption(ZMQ_IPV6, False);
+            assertEq(False, sock.getOption(ZMQ_IPV6));
+        }
+
+        # test string options
+        {
+            ZSocketPush sock(zctx);
+
+            # test SOCKS proxy (empty by default)
+            assertEq("", sock.getOption(ZMQ_SOCKS_PROXY));
+        }
+
+        # test read-only options
+        {
+            ZSocketPush sock(zctx, "@tcp://127.0.0.1:*");
+            # Socket type can be checked via the type() method
+            assertEq("PUSH", sock.type());
+        }
+
+        # negative test - unknown option
+        {
+            ZSocketPush sock(zctx);
+            assertThrows("ZSOCKET-OPTION-ERROR", \sock.getOption(), 99999);
+        }
+
+        # negative test - invalid bufsize for getOption
+        {
+            ZSocketPush sock(zctx);
+            assertThrows("ZSOCKET-GETOPTION-ERROR", \sock.getOption(), (ZMQ_LINGER, 0));
+            assertThrows("ZSOCKET-GETOPTION-ERROR", \sock.getOption(), (ZMQ_LINGER, -1));
+        }
+    }
+
+    connectionManagementTest() {
+        # test disconnect
+        {
+            ZSocketPush writer(zctx, "@tcp://127.0.0.1:*");
+            string endpoint = writer.endpoint();
+            ZSocketPull reader(zctx);
+            reader.connect(endpoint);
+
+            # disconnect should succeed
+            assertEq(NOTHING, reader.disconnect(endpoint));
+        }
+
+        # test multiple bind
+        {
+            ZSocketPush sock(zctx);
+            int port1 = sock.bind("tcp://127.0.0.1:*");
+            int port2 = sock.bind("tcp://127.0.0.1:*");
+            assertTrue(port1 > 0);
+            assertTrue(port2 > 0);
+            assertTrue(port1 != port2);
+        }
+
+        # test unbind and rebind
+        {
+            ZSocketPush sock(zctx, "@tcp://127.0.0.1:*");
+            string endpoint = sock.endpoint();
+            assertEq(NOTHING, sock.unbind(endpoint));
+            # rebind to same port should work after unbind
+            int port = sock.bind("tcp://127.0.0.1:*");
+            assertTrue(port > 0);
+        }
+    }
+
+    tryRecvTest() {
+        # test tryRecvMsg with timeout
+        {
+            ZSocketPull reader(zctx, "@tcp://127.0.0.1:*");
+
+            # should return NOTHING on timeout instead of throwing
+            *ZMsg msg = reader.tryRecvMsg(10ms);
+            assertEq(NOTHING, msg);
+        }
+
+        # corner case - zero timeout (immediate return)
+        {
+            ZSocketPull reader(zctx, "@tcp://127.0.0.1:*");
+            *ZMsg msg = reader.tryRecvMsg(0ms);
+            assertEq(NOTHING, msg);
+        }
+
+        # test tryRecvMsg with available message
+        {
+            ZSocketPush writer(zctx, "@tcp://127.0.0.1:*");
+            ZSocketPull reader(zctx, ">" + writer.endpoint());
+
+            writer.send(HelloWorld);
+            *ZMsg msg = reader.tryRecvMsg(5s);
+            assertEq(True, exists msg);
+            assertEq(HelloWorld, msg.popStr());
+        }
+
+        # test tryRecvFrame with timeout
+        {
+            ZSocketPull reader(zctx, "@tcp://127.0.0.1:*");
+
+            # should return NOTHING on timeout instead of throwing
+            *ZFrame frame = reader.tryRecvFrame(10ms);
+            assertEq(NOTHING, frame);
+        }
+
+        # test tryRecvFrame with available frame
+        {
+            ZSocketPush writer(zctx, "@tcp://127.0.0.1:*");
+            ZSocketPull reader(zctx, ">" + writer.endpoint());
+
+            writer.send(HelloWorld);
+            *ZFrame frame = reader.tryRecvFrame(5s);
+            assertEq(True, exists frame);
+            assertTrue(frame.streq(HelloWorld));
+        }
+    }
+
+    hasMoreTest() {
+        ZSocketPush writer(zctx, "@tcp://127.0.0.1:*");
+        ZSocketPull reader(zctx, ">" + writer.endpoint());
+
+        # send multipart message
+        ZMsg msg(HelloWorld, Testing);
+        writer.send(msg);
+
+        # receive first frame and check hasMore
+        ZFrame f1 = reader.recvFrame();
+        assertTrue(f1.streq(HelloWorld));
+        assertTrue(reader.hasMore());
+
+        # receive second frame and check hasMore
+        ZFrame f2 = reader.recvFrame();
+        assertTrue(f2.streq(Testing));
+        assertFalse(reader.hasMore());
+    }
+
+    highWaterMarkTest() {
+        ZSocketPush writer(zctx);
+
+        # set and verify receive high water mark
+        writer.setRecvHighWaterMark(500);
+        assertEq(500, writer.getOption(ZMQ_RCVHWM));
+
+        # set and verify send high water mark
+        writer.setSendHighWaterMark(600);
+        assertEq(600, writer.getOption(ZMQ_SNDHWM));
+    }
+
+    z85DecodeTest() {
+        # test round-trip encode/decode
+        {
+            binary original = get_random_bytes(32);
+            string encoded = zmq_z85_encode(original);
+            assertEq(40, encoded.size());  # 32 bytes -> 40 chars
+
+            binary decoded = zmq_z85_decode(encoded);
+            assertEq(original, decoded);
+        }
+
+        # test known value
+        {
+            # 4 bytes -> 5 chars
+            binary data = <01020304>;
+            string encoded = zmq_z85_encode(data);
+            binary decoded = zmq_z85_decode(encoded);
+            assertEq(data, decoded);
+        }
+
+        # test with curve keys
+        {
+            hash<ZmqCurveKeyInfo> kh = zmq_curve_keypair();
+            assertEq(40, kh.pub.size());
+            assertEq(40, kh.secret.size());
+
+            # decode and verify sizes
+            binary pub_bin = zmq_z85_decode(kh.pub);
+            binary secret_bin = zmq_z85_decode(kh.secret);
+            assertEq(32, pub_bin.size());
+            assertEq(32, secret_bin.size());
+        }
+
+        # negative test - invalid length (not divisible by 5)
+        assertThrows("ZMQ-Z85-DECODE-ERROR", \zmq_z85_decode(), "1234");  # 4 chars
+
+        # negative test - length divisible by 5 but contains invalid char
+        # Z85 uses: 0-9, a-z, A-Z, .-:+=^!/*?&<>()[]{}@%$#
+        # Space is not a valid Z85 character
+        assertThrows("ZMQ-Z85-DECODE-ERROR", \zmq_z85_decode(), "0000 ");  # 5 chars, length ok but contains invalid char ' '
+
+        # corner case - empty string returns error (not valid Z85)
+        assertThrows("ZMQ-Z85-DECODE-ERROR", \zmq_z85_decode(), "");
+
+        # corner case - minimum valid input (5 chars -> 4 bytes)
+        {
+            binary data = <deadbeef>;
+            string encoded = zmq_z85_encode(data);
+            assertEq(5, encoded.size());
+            binary decoded = zmq_z85_decode(encoded);
+            assertEq(data, decoded);
+        }
+    }
+
+    draftTest() {
+        # test ZMsg group methods (for RADIO/DISH)
+        {
+            ZMsg msg(HelloWorld);
+
+            # set group
+            assertEq(NOTHING, msg.setGroup("testgroup"));
+
+            # get group
+            *string group = msg.getGroup();
+            assertEq("testgroup", group);
+        }
+
+        # test routingId
+        {
+            ZMsg msg();
+            assertEq(0, msg.routingId());
+            assertNothing(msg.setRoutingId(10));
+            assertEq(10, msg.routingId());
+        }
+    }
+
+    steerableProxyTest() {
+        # new context for proxied sockets
+        ZContext zctx2();
+
+        # Counter to synchronize the proxy thread with the main thread
+        Counter c(1);
+
+        # create control socket pair
+        string ctrl_endpoint = "inproc://proxy-control-" + get_random_string(10);
+
+        # proxy closure to be executed in the background
+        background sub () {
+            # create a router
+            ZSocketRouter reader(zctx2, "proxy-router-1", "tcp://127.0.0.1:*");
+            # connect writer
+            ZSocketDealer writer(zctx2, "proxy-writer-1", ">" + reader.endpoint());
+            # create control socket (bind side)
+            ZSocketPair control(zctx2, "@" + ctrl_endpoint);
+            # signal main thread that the context can be destroyed
+            c.dec();
+            # start the steerable proxy
+            ZSocket::proxySteerable(writer, reader, NOTHING, control);
+        }();
+
+        # wait for the sockets to be created
+        c.waitForZero();
+
+        # create control socket (connect side)
+        ZSocketPair ctrl(zctx, ">" + ctrl_endpoint);
+
+        # test PAUSE command
+        ctrl.send("PAUSE");
+        usleep(50ms);
+
+        # test RESUME command
+        ctrl.send("RESUME");
+        usleep(50ms);
+
+        # test TERMINATE command - this should stop the proxy
+        ctrl.send("TERMINATE");
+
+        # shutdown the context (proxy should already be stopped)
+        zctx2.shutdown();
     }
 }

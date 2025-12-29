@@ -56,6 +56,11 @@ if(HAVE_ZFRAME_META)
     add_definitions(-DHAVE_ZFRAME_META)
 endif(HAVE_ZFRAME_META)
 
+check_function_exists(zmq_proxy_steerable HAVE_ZMQ_PROXY_STEERABLE)
+if(HAVE_ZMQ_PROXY_STEERABLE)
+    add_definitions(-DHAVE_ZMQ_PROXY_STEERABLE)
+endif(HAVE_ZMQ_PROXY_STEERABLE)
+
 # check signature of zmsg_encode()
 check_cxx_source_compiles("
 #include <zmq.h>

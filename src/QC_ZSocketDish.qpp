@@ -65,3 +65,57 @@ ZSocketDish::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx) {
    ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
    self->setPrivate(CID_ZSOCKETDISH, new QoreDishZSock(*ctx, nullptr, xsink));
 }
+
+//! Joins a message group on the DISH socket
+/** @par Example:
+    @code{.py}
+dish.join("mygroup");
+    @endcode
+
+    @param group the group name to join; must be at most 255 characters
+
+    The DISH socket will receive messages sent to this group by RADIO sockets.
+    A DISH socket can join multiple groups.
+
+    @throw ZSOCKET-JOIN-ERROR if an error occurs joining the group
+    @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
+    @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
+
+    @see leave()
+*/
+nothing ZSocketDish::join(string group) {
+    // enforce access from the correct thread
+    if (sock->check(xsink))
+        return QoreValue();
+
+    int rc = zmq_join(**sock, group->c_str());
+    if (rc < 0)
+        zmq_error(xsink, "ZSOCKET-JOIN-ERROR", "error joining group \"%s\"", group->c_str());
+}
+
+//! Leaves a message group on the DISH socket
+/** @par Example:
+    @code{.py}
+dish.leave("mygroup");
+    @endcode
+
+    @param group the group name to leave
+
+    After calling this method, the DISH socket will no longer receive messages
+    sent to this group by RADIO sockets.
+
+    @throw ZSOCKET-LEAVE-ERROR if an error occurs leaving the group
+    @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
+    @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
+
+    @see join()
+*/
+nothing ZSocketDish::leave(string group) {
+    // enforce access from the correct thread
+    if (sock->check(xsink))
+        return QoreValue();
+
+    int rc = zmq_leave(**sock, group->c_str());
+    if (rc < 0)
+        zmq_error(xsink, "ZSOCKET-LEAVE-ERROR", "error leaving group \"%s\"", group->c_str());
+}

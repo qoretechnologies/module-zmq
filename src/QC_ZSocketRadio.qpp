@@ -63,5 +63,5 @@ ZSocketRadio sock(ctx);
  */
 ZSocketRadio::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx) {
    ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-   self->setPrivate(CID_ZSOCKETRADIO, new QoreRadioZSock(*ctx, nullptr, nullptr, xsink));
+   self->setPrivate(CID_ZSOCKETRADIO, new QoreRadioZSock(*ctx, nullptr, xsink));
 }

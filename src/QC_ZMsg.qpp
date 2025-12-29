@@ -673,3 +673,73 @@ nothing ZMsg::save(Qore::File[File] file) {
     if (rc)
         zmq_error(xsink, "ZMSG-SAVE-ERROR", "error in zmsg_save()");
 }
+
+//! Sets the group for the message (for use with RADIO sockets)
+/** @par Example:
+    @code{.py}
+msg.setGroup("mygroup");
+radio.send(msg);
+    @endcode
+
+    @param group the group name; must be at most 255 characters
+
+    This method is used to set the destination group for messages sent via
+    RADIO sockets. DISH sockets that have joined this group will receive
+    the message.
+
+    @throw ZMSG-SETGROUP-ERROR if an error occurs setting the group
+    @throw ZMSG-THREAD-ERROR this exception is thrown when the object is used in a thread other than the one that created it
+    @throw MISSING-FEATURE-ERROR thrown if the underlying library is missing draft API support
+
+    @note only available if the underlying library supports draft APIs; check @ref Qore::ZMQ::HAVE_ZMQ_DRAFT_APIS "HAVE_ZMQ_DRAFT_APIS" before calling this method
+
+    @see getGroup()
+*/
+nothing ZMsg::setGroup(string group) {
+    if (msg->check(xsink))
+        return QoreValue();
+
+#ifdef QORE_BUILD_ZMQ_DRAFT
+    int rc = zmsg_set_group(**msg, group->c_str());
+    if (rc < 0)
+        zmq_error(xsink, "ZMSG-SETGROUP-ERROR", "error setting group \"%s\"", group->c_str());
+#else
+    xsink->raiseException("MISSING-FEATURE-ERROR", "the underlying czmq library is missing a function required to implement this method; check HAVE_ZMQ_DRAFT_APIS before calling");
+    return QoreValue();
+#endif
+}
+
+//! Gets the group from the message (for messages received on DISH sockets)
+/** @par Example:
+    @code{.py}
+ZMsg msg = dish.recvMsg();
+*string group = msg.getGroup();
+    @endcode
+
+    @return the group name for the message, or @ref nothing if no group is set
+
+    This method is used to get the source group for messages received via
+    DISH sockets.
+
+    @throw ZMSG-THREAD-ERROR this exception is thrown when the object is used in a thread other than the one that created it
+    @throw MISSING-FEATURE-ERROR thrown if the underlying library is missing draft API support
+
+    @note only available if the underlying library supports draft APIs; check @ref Qore::ZMQ::HAVE_ZMQ_DRAFT_APIS "HAVE_ZMQ_DRAFT_APIS" before calling this method
+
+    @see setGroup()
+*/
+*string ZMsg::getGroup() [flags=CONSTANT] {
+    if (msg->check(xsink))
+        return QoreValue();
+
+#ifdef QORE_BUILD_ZMQ_DRAFT
+    const char* group = zmsg_group(**msg);
+    if (!group || !group[0])
+        return QoreValue();
+
+    return new QoreStringNode(group, QCS_UTF8);
+#else
+    xsink->raiseException("MISSING-FEATURE-ERROR", "the underlying czmq library is missing a function required to implement this method; check HAVE_ZMQ_DRAFT_APIS before calling");
+    return QoreValue();
+#endif
+}
