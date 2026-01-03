@@ -23,6 +23,7 @@
 #define _QORE_ZMQ_MODULE_H
 
 #include <qore/Qore.h>
+#include <qore/QoreSandboxManager.h>
 
 #ifdef QORE_BUILD_ZMQ_DRAFT
 #define ZMQ_BUILD_DRAFT_API 1

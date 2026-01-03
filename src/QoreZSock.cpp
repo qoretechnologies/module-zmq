@@ -36,6 +36,10 @@
 static std::regex url_port_regex("^tcp://.*:(\\d+|\\*)$", std::regex_constants::ECMAScript | std::regex_constants::icase | std::regex_constants::optimize);
 
 int QoreZSock::poll(short events, int timeout_ms, const char* meth, ExceptionSink *xsink) {
+    // Check for interrupt before poll
+    if (qore_check_io_interrupt(xsink))
+        return -1;
+
     zmq_pollitem_t p = { sock, 0, events, 0 };
     int rc;
     while (true) {
@@ -84,6 +88,10 @@ int QoreZSock::attach(ExceptionSink *xsink, const char* endpoints, bool do_bind)
 }
 
 int QoreZSock::bind(ExceptionSink *xsink, const char* endpoint, const char* err) {
+    // Check for interrupt before bind
+    if (qore_check_io_interrupt(xsink))
+        return -1;
+
     std::cmatch match;
     if (regex_search(endpoint, match, url_port_regex)) {
         assert(match.ready());
@@ -115,6 +123,10 @@ int QoreZSock::bind(ExceptionSink *xsink, const char* endpoint, const char* err)
 }
 
 int QoreZSock::connect(ExceptionSink *xsink, const char* endpoint, const char* err) {
+    // Check for interrupt before connect
+    if (qore_check_io_interrupt(xsink))
+        return -1;
+
     // NOTE: zmq_connect() is not affected by EINTR
     int rc = zmq_connect(sock, endpoint);
     if (rc)
