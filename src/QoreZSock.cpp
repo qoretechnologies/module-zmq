@@ -42,6 +42,49 @@ int QoreZSock::poll(short events, int timeout_ms, const char* meth, ExceptionSin
 
     zmq_pollitem_t p = { sock, 0, events, 0 };
     int rc;
+
+    // Use polling with interrupt checks if sandbox manager exists
+    QoreSandboxManager* sm = runtime_get_sandbox_manager();
+    if (sm) {
+        const int poll_interval_ms = 500;  // 500ms polling interval for interrupt checks
+        int64_t remaining_ms = timeout_ms;
+        bool infinite = (timeout_ms < 0);
+
+        while (true) {
+            // Check for interrupt
+            if (sm->isInterruptRequested()) {
+                xsink->raiseException("PROGRAM-INTERRUPTED", "program execution was interrupted while waiting in %s()", meth);
+                return -1;
+            }
+
+            // Calculate effective timeout for this iteration
+            int effective_timeout = infinite ? poll_interval_ms :
+                (remaining_ms > poll_interval_ms ? poll_interval_ms : static_cast<int>(remaining_ms));
+
+            rc = zmq_poll(&p, 1, effective_timeout);
+            if (rc == -1 && errno == EINTR)
+                continue;
+            if (rc > 0)
+                return 0;  // Success - data available
+            if (rc == -1) {
+                zmq_error(xsink, "ZSOCKET-TIMEOUT", "error in zmq_poll() in %s()", meth);
+                return -1;
+            }
+
+            // rc == 0: timeout on this iteration
+            if (!infinite) {
+                remaining_ms -= effective_timeout;
+                if (remaining_ms <= 0) {
+                    xsink->raiseException("ZSOCKET-TIMEOUT", "timeout waiting %d ms in %s() for data%s on the socket",
+                        timeout_ms, meth, events & ZMQ_POLLOUT ? " to be sent" : "");
+                    return -1;
+                }
+            }
+            // Continue polling (infinite timeout or time remaining)
+        }
+    }
+
+    // No sandbox manager - use simple blocking poll
     while (true) {
         rc = zmq_poll(&p, 1, timeout_ms);
         if (rc == -1 && errno == EINTR)
