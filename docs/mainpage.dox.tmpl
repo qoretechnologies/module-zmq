@@ -147,6 +147,9 @@ ZMsg msg = server.recvMsg();
 
     @subsection zmq_1_1_0 zmq Module Version 1.1.0
     <b>New Features and Enhancements:</b>
+    - Added support for interruptible I/O for graceful termination of sandboxed programs; interrupt
+      checks are performed before poll, bind, and connect operations
+      (<a href="https://github.com/qoretechnologies/qore/issues/5116">issue 5116</a>)
     - Added @ref Qore::ZMQ::ZFrame::readi2N() "ZFrame::readi2N()": read 16-bit integer in network byte order
     - Added @ref Qore::ZMQ::ZFrame::readi4N() "ZFrame::readi4N()": read 32-bit integer in network byte order
     - Added @ref Qore::ZMQ::ZFrame::readi8N() "ZFrame::readi8N()": read 64-bit integer in network byte order
