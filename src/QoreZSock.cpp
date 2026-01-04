@@ -32,6 +32,127 @@
 #include <strings.h>
 #include <ctype.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <netdb.h>
+
+// Helper function to parse port string safely
+// Returns port number, or 0 for wildcard/dynamic port
+static int parsePort(const char* port_str) {
+    if (!port_str || !*port_str || *port_str == '*') {
+        return 0;  // Dynamic port
+    }
+    return atoi(port_str);
+}
+
+// Helper function to check TCP/UDP network access
+// Returns true if access is allowed, false if denied (exception raised)
+static bool checkTcpUdpAccess(QoreSandboxManager* sm, const char* hostport, int proto,
+                               const char* transport_name, ExceptionSink* xsink) {
+    // Find the last colon (port separator)
+    const char* port_sep = strrchr(hostport, ':');
+    if (!port_sep) {
+        xsink->raiseException("ZMQ-ENDPOINT-ERROR", "invalid %s endpoint format: missing port",
+                              transport_name);
+        return false;
+    }
+
+    // Extract host and port
+    std::string host(hostport, port_sep - hostport);
+    const char* port_str = port_sep + 1;
+
+    // Handle IPv6 addresses in brackets: [::1]:5555
+    if (host.size() >= 2 && host.front() == '[' && host.back() == ']') {
+        host = host.substr(1, host.size() - 2);
+    }
+
+    // Handle bind-all addresses
+    if (host == "*" || host == "0.0.0.0" || host == "::") {
+        // For binding to all interfaces, use a generic check
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = INADDR_ANY;
+        addr.sin_port = htons(parsePort(port_str));
+        return sm->checkNetworkAccess((struct sockaddr*)&addr, sizeof(addr), proto, xsink);
+    }
+
+    // Resolve hostname
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = (proto == QSEC_NET_TCP) ? SOCK_STREAM : SOCK_DGRAM;
+
+    int rc = getaddrinfo(host.c_str(), port_str, &hints, &res);
+    if (rc != 0) {
+        xsink->raiseException("ZMQ-ENDPOINT-ERROR", "failed to resolve host '%s': %s",
+                              host.c_str(), gai_strerror(rc));
+        return false;
+    }
+
+    // Check access for the first resolved address
+    bool allowed = sm->checkNetworkAccess(res->ai_addr, res->ai_addrlen, proto, xsink);
+    freeaddrinfo(res);
+    return allowed;
+}
+
+// Helper function to check network access for ZMQ endpoints
+// Returns true if access is allowed, false if denied (exception raised)
+static bool checkZmqNetworkAccess(const char* endpoint, ExceptionSink* xsink) {
+    QoreSandboxManager* sm = runtime_get_sandbox_manager();
+    if (!sm) {
+        return true;  // No sandbox manager, allow all access
+    }
+
+    // Parse endpoint to determine transport type
+    // ZMQ endpoints: tcp://host:port, udp://host:port, ipc:///path, inproc://name,
+    //                pgm://interface;multicast:port, epgm://interface;multicast:port
+    if (strncasecmp(endpoint, "tcp://", 6) == 0) {
+        return checkTcpUdpAccess(sm, endpoint + 6, QSEC_NET_TCP, "TCP", xsink);
+    }
+    else if (strncasecmp(endpoint, "udp://", 6) == 0) {
+        return checkTcpUdpAccess(sm, endpoint + 6, QSEC_NET_UDP, "UDP", xsink);
+    }
+    else if (strncasecmp(endpoint, "ipc://", 6) == 0) {
+        // IPC (Unix domain socket) - check as Unix socket
+        const char* path = endpoint + 6;
+        struct sockaddr_un addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+        return sm->checkNetworkAccess((struct sockaddr*)&addr, sizeof(addr), QSEC_NET_UNIX, xsink);
+    }
+    else if (strncasecmp(endpoint, "inproc://", 9) == 0) {
+        // In-process transport - no network access needed
+        return true;
+    }
+    else if (strncasecmp(endpoint, "pgm://", 6) == 0 || strncasecmp(endpoint, "epgm://", 7) == 0) {
+        // PGM/EPGM multicast format: [e]pgm://interface;multicast_address:port
+        // We check the multicast address, not the interface
+        const char* addr_start = strstr(endpoint, "://") + 3;
+
+        // Find interface separator (semicolon)
+        const char* semicolon = strchr(addr_start, ';');
+        const char* multicast_start;
+        if (semicolon) {
+            // Format: interface;multicast:port - use the multicast address
+            multicast_start = semicolon + 1;
+        } else {
+            // Format: multicast:port (no interface specified)
+            multicast_start = addr_start;
+        }
+
+        return checkTcpUdpAccess(sm, multicast_start, QSEC_NET_UDP, "PGM", xsink);
+    }
+    else if (strncasecmp(endpoint, "vmci://", 7) == 0) {
+        // VMware virtual socket - no standard network check, allow by default
+        // VMCI uses CID:port format, not IP addresses
+        return true;
+    }
+
+    // Unknown transport - allow by default (ZMQ may support new transports)
+    return true;
+}
 
 static std::regex url_port_regex("^tcp://.*:(\\d+|\\*)$", std::regex_constants::ECMAScript | std::regex_constants::icase | std::regex_constants::optimize);
 
@@ -135,6 +256,10 @@ int QoreZSock::bind(ExceptionSink *xsink, const char* endpoint, const char* err)
     if (qore_check_io_interrupt(xsink))
         return -1;
 
+    // Check network access for sandbox
+    if (!checkZmqNetworkAccess(endpoint, xsink))
+        return -1;
+
     std::cmatch match;
     if (regex_search(endpoint, match, url_port_regex)) {
         assert(match.ready());
@@ -168,6 +293,10 @@ int QoreZSock::bind(ExceptionSink *xsink, const char* endpoint, const char* err)
 int QoreZSock::connect(ExceptionSink *xsink, const char* endpoint, const char* err) {
     // Check for interrupt before connect
     if (qore_check_io_interrupt(xsink))
+        return -1;
+
+    // Check network access for sandbox
+    if (!checkZmqNetworkAccess(endpoint, xsink))
         return -1;
 
     // NOTE: zmq_connect() is not affected by EINTR
