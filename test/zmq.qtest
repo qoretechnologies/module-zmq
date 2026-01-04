@@ -52,6 +52,7 @@ class ZmqTest inherits QUnit::Test {
         if (HAVE_ZMQ_PROXY_STEERABLE) {
             addTestCase("steerable proxy", \steerableProxyTest());
         }
+        addTestCase("sandbox interrupt", \sandboxInterruptTest());
 
         set_return_value(main());
     }
@@ -1142,5 +1143,59 @@ class ZmqTest inherits QUnit::Test {
 
         # shutdown the context (proxy should already be stopped)
         zctx2.shutdown();
+    }
+
+    sandboxInterruptTest() {
+        # Test that ZMQ poll operations can be interrupted when running in a sandboxed program
+        # with a SandboxManager attached
+
+        # Create a sandboxed program
+        Program p(PO_NEW_STYLE | PO_STRICT_ARGS | PO_REQUIRE_TYPES);
+        p.loadModule("zmq");
+
+        # Parse the test code
+        p.parse("
+            sub test_blocked_recv(Queue q) {
+                ZContext zctx();
+                ZSocketPull reader(zctx, '@tcp://127.0.0.1:*');
+                q.push(True);  # signal that we're ready
+                try {
+                    # This should block until interrupted
+                    reader.recvMsg();
+                    q.push({'error': 'recvMsg did not throw'});
+                } catch (hash<ExceptionInfo> ex) {
+                    q.push(ex);
+                }
+            }
+        ", "test");
+
+        # Create a SandboxManager and attach it to the program
+        SandboxManager sm();
+        p.setSandboxManager(sm);
+
+        # Queue for communication with the sandboxed program
+        Queue q();
+
+        # Run the test code in a background thread
+        background p.callFunction("test_blocked_recv", q);
+
+        # Wait for the sandboxed program to be ready
+        auto ready = q.get(5s);
+        assertTrue(ready);
+
+        # Give it a moment to start blocking on recvMsg
+        usleep(100ms);
+
+        # Request interrupt
+        sm.requestInterrupt();
+
+        # Wait for the result
+        auto result = q.get(5s);
+        assertEq("hash<ExceptionInfo>", result.fullType());
+        assertEq("PROGRAM-INTERRUPTED", result.err);
+
+        if (m_options.verbose) {
+            printf("Interrupt test result: %s: %s\n", result.err, result.desc);
+        }
     }
 }

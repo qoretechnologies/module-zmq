@@ -2072,24 +2072,82 @@ ZMsg frm = zsock.recvMsg();
     @throw ZSOCKET-TIMEOUT-ERROR thrown if a timeout error occurs
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a non-thread-safe socket and a thread other than the thread where the object was created
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
+    @throw PROGRAM-INTERRUPTED thrown if the program is interrupted while waiting for a message
 */
 ZMsg ZSocket::recvMsg() {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
+
+    // Check for interrupt before receive
+    if (qore_check_io_interrupt(xsink))
+        return QoreValue();
+
     zmsg_t* msg;
-    while (true) {
-        msg = zmsg_recv(**zsock);
-        if (!msg) {
-            if (errno == EINTR)
-                continue;
-            if (errno == EAGAIN)
-                zmq_error(xsink, "ZSOCKET-TIMEOUT-ERROR", "timeout in ZSocket::recvMsg()");
-            else
-                zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error in ZSocket::recvMsg()");
+
+    // Use polling with interrupt checks if sandbox manager exists
+    QoreSandboxManager* sm = runtime_get_sandbox_manager();
+    if (sm) {
+        const int poll_interval_ms = 500;  // 500ms polling interval for interrupt checks
+
+        // Save current timeout
+        int old_timeout;
+        size_t len = sizeof(old_timeout);
+        if (zsock->getSocketOption(ZMQ_RCVTIMEO, &old_timeout, &len)) {
+            zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error getting receive timeout in ZSocket::recvMsg()");
             return QoreValue();
         }
-        break;
+
+        // Set polling timeout
+        int poll_timeout = poll_interval_ms;
+        if (zsock->setSocketOption(ZMQ_RCVTIMEO, &poll_timeout, sizeof(poll_timeout))) {
+            zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error setting receive timeout in ZSocket::recvMsg()");
+            return QoreValue();
+        }
+
+        while (true) {
+            // Check for interrupt
+            if (sm->isInterruptRequested()) {
+                // Restore original timeout before raising exception
+                zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+                xsink->raiseException("PROGRAM-INTERRUPTED", "program execution was interrupted while waiting in recvMsg()");
+                return QoreValue();
+            }
+
+            msg = zmsg_recv(**zsock);
+            if (msg) {
+                // Success - restore timeout and return
+                zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+                break;
+            }
+
+            if (errno == EINTR)
+                continue;
+            if (errno == EAGAIN) {
+                // Timeout on this poll interval - continue polling
+                continue;
+            }
+
+            // Real error - restore timeout and raise exception
+            zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+            zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error in ZSocket::recvMsg()");
+            return QoreValue();
+        }
+    } else {
+        // No sandbox manager - use simple blocking receive
+        while (true) {
+            msg = zmsg_recv(**zsock);
+            if (!msg) {
+                if (errno == EINTR)
+                    continue;
+                if (errno == EAGAIN)
+                    zmq_error(xsink, "ZSOCKET-TIMEOUT-ERROR", "timeout in ZSocket::recvMsg()");
+                else
+                    zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error in ZSocket::recvMsg()");
+                return QoreValue();
+            }
+            break;
+        }
     }
     return new QoreObject(QC_ZMSG, getProgram(), new QoreZMsg(msg));
 }
