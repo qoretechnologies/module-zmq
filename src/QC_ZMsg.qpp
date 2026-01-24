@@ -455,8 +455,10 @@ nothing ZMsg::push(Qore::ZMQ::ZFrame[QoreZFrame] frame) {
     ON_BLOCK_EXIT(zframe_destroy, &frame);
 
     size_t size = zframe_size(frame);
-    if (!size)
-        return QoreValue();
+    if (!size) {
+        // Return an empty string for zero-length frames
+        return new QoreStringNode(qe);
+    }
     // zframe_strdup() does handle embedded nulls and returns nullptr on OOM
     char* p = zframe_strdup(frame);
     if (!p) {
@@ -530,12 +532,7 @@ nothing ZMsg::setRoutingId(int routing_id) {
     if (msg->check(xsink))
         return QoreValue();
 
-#ifdef QORE_BUILD_ZMQ_DRAFT
     zmsg_set_routing_id(**msg, (int)routing_id);
-#else
-    xsink->raiseException("MISSING-FEATURE-ERROR", "the underlying czmq library is missing a function required to implement this method; check HAVE_ZMQ_DRAFT_APIS before calling");
-    return QoreValue();
-#endif
 }
 
 //! Returns a routing ID greater than 0 if the message is from a \c SERVER socket, 0 if not
@@ -555,12 +552,7 @@ int ZMsg::routingId() [flags=CONSTANT] {
     if (msg->check(xsink))
         return QoreValue();
 
-#ifdef QORE_BUILD_ZMQ_DRAFT
     return zmsg_routing_id(**msg);
-#else
-    xsink->raiseException("MISSING-FEATURE-ERROR", "the underlying czmq library is missing a function required to implement this method; check HAVE_ZMQ_DRAFT_APIS before calling");
-    return QoreValue();
-#endif
 }
 
 //! Returns the number of frames in the message
@@ -699,13 +691,19 @@ nothing ZMsg::setGroup(string group) {
     if (msg->check(xsink))
         return QoreValue();
 
-#ifdef QORE_BUILD_ZMQ_DRAFT
-    int rc = zmsg_set_group(**msg, group->c_str());
-    if (rc < 0)
+#ifdef HAVE_CZMQ_DRAFT_API
+    // Group is set on the first frame of the message
+    zframe_t* frame = zmsg_first(**msg);
+    if (!frame) {
+        xsink->raiseException("ZMSG-SETGROUP-ERROR", "cannot set group on empty message");
+        return QoreValue();
+    }
+    int rc = zframe_set_group(frame, group->c_str());
+    if (rc < 0) {
         zmq_error(xsink, "ZMSG-SETGROUP-ERROR", "error setting group \"%s\"", group->c_str());
+    }
 #else
-    xsink->raiseException("MISSING-FEATURE-ERROR", "the underlying czmq library is missing a function required to implement this method; check HAVE_ZMQ_DRAFT_APIS before calling");
-    return QoreValue();
+    xsink->raiseException("MISSING-FEATURE-ERROR", "the underlying czmq library is missing draft APIs; check HAVE_ZMQ_DRAFT_APIS before calling");
 #endif
 }
 
@@ -732,14 +730,19 @@ ZMsg msg = dish.recvMsg();
     if (msg->check(xsink))
         return QoreValue();
 
-#ifdef QORE_BUILD_ZMQ_DRAFT
-    const char* group = zmsg_group(**msg);
+#ifdef HAVE_CZMQ_DRAFT_API
+    // Group is retrieved from the first frame of the message
+    zframe_t* frame = zmsg_first(**msg);
+    if (!frame)
+        return QoreValue();
+
+    const char* group = zframe_group(frame);
     if (!group || !group[0])
         return QoreValue();
 
     return new QoreStringNode(group, QCS_UTF8);
 #else
-    xsink->raiseException("MISSING-FEATURE-ERROR", "the underlying czmq library is missing a function required to implement this method; check HAVE_ZMQ_DRAFT_APIS before calling");
+    xsink->raiseException("MISSING-FEATURE-ERROR", "the underlying czmq library is missing draft APIs; check HAVE_ZMQ_DRAFT_APIS before calling");
     return QoreValue();
 #endif
 }

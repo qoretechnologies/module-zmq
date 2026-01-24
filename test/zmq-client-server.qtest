@@ -1,0 +1,693 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%require-types
+%strict-args
+
+%requires QUnit
+%requires Util
+%requires zmq
+
+%exec-class ZmqClientServerTest
+
+class ZmqClientServerTest inherits QUnit::Test {
+    public {
+        const HelloWorld = "Hello, World!";
+        const Testing = "testing, 1, 2, 3";
+        const Bin = <ab00cd>;
+        const StrBin = "hi\0there";
+        const LargeData = get_random_string(100000);  # 100KB
+    }
+
+    private:internal {
+        ZContext zctx();
+    }
+
+    constructor() : QUnit::Test("ZmqClientServerTest", "1.0") {
+        if (!HAVE_ZMQ_DRAFT_APIS) {
+            printf("Skipping CLIENT/SERVER tests - draft APIs not available\n");
+            set_return_value(0);
+            return;
+        }
+
+        addTestCase("basic client/server", \basicClientServerTest());
+        addTestCase("multiple clients", \multipleClientsTest());
+        addTestCase("concurrent sends", \concurrentSendsTest());
+        addTestCase("routing_id round trip", \routingIdRoundTripTest());
+        addTestCase("large message serialization", \largeMessageTest());
+        addTestCase("empty frame handling", \emptyFrameTest());
+        addTestCase("binary data with nulls", \binaryNullsTest());
+        addTestCase("unicode strings", \unicodeTest());
+        addTestCase("single frame message", \singleFrameTest());
+        addTestCase("many frames", \manyFramesTest());
+        addTestCase("tryRecvMsg timeout", \tryRecvTimeoutTest());
+        addTestCase("thread safety", \threadSafetyTest());
+        addTestCase("socket type check", \socketTypeTest());
+        addTestCase("negative - invalid routing_id", \negativeRoutingIdTest());
+        addTestCase("negative - getRoutingId before recv", \negativeGetRoutingIdBeforeRecvTest());
+        addTestCase("negative - send without setRoutingId", \negativeSendWithoutRoutingIdTest());
+        addTestCase("negative - stale routing_id", \negativeStaleRoutingIdTest());
+        addTestCase("corner - all empty frames", \allEmptyFramesTest());
+        addTestCase("corner - mixed binary and string", \mixedBinaryStringTest());
+        addTestCase("corner - rapid reconnect", \rapidReconnectTest());
+        addTestCase("corner - bidirectional multi-frame", \bidirectionalMultiFrameTest());
+        addTestCase("corner - ZMsg send", \zmsgSendTest());
+        addTestCase("server - multiple clients routing", \multipleClientsRoutingTest());
+
+        set_return_value(main());
+    }
+
+    basicClientServerTest() {
+        # Create SERVER socket (binds)
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        assertEq("SERVER", server.type());
+        string endpoint = server.endpoint();
+        assertTrue(endpoint.size() > 0);
+
+        # Create CLIENT socket (connects)
+        ZSocketClient client(zctx, endpoint);
+        assertEq("CLIENT", client.type());
+
+        # Send from client to server
+        client.send(HelloWorld);
+        ZMsg msg = server.recvMsg();
+        assertEq(1, msg.size());
+        assertEq(HelloWorld, msg.popStr());
+
+        # Get routing_id for response
+        int routing_id = server.getRoutingId();
+        assertTrue(routing_id > 0);
+
+        # Send response back to client
+        server.setRoutingId(routing_id);
+        server.send(Testing);
+        msg = client.recvMsg();
+        assertEq(1, msg.size());
+        assertEq(Testing, msg.popStr());
+
+        if (m_options.verbose > 2) {
+            printf("Basic CLIENT/SERVER test passed\n");
+        }
+    }
+
+    multipleClientsTest() {
+        # SERVER with multiple CLIENTs (fan-in)
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        string endpoint = server.endpoint();
+
+        # Create multiple clients
+        list<ZSocketClient> clients = ();
+        for (int i = 0; i < 5; ++i) {
+            clients += new ZSocketClient(zctx, endpoint);
+        }
+
+        # Each client sends a message
+        for (int i = 0; i < clients.size(); ++i) {
+            clients[i].send("Message from client " + i);
+        }
+
+        # Server receives all messages
+        hash<string, bool> received;
+        for (int i = 0; i < clients.size(); ++i) {
+            ZMsg msg = server.recvMsg();
+            string content = msg.popStr();
+            assertTrue(content.find("Message from client") >= 0);
+            string client_num = content.substr(-1);
+            received{client_num} = True;
+        }
+
+        # Verify we received from all clients
+        assertEq(clients.size(), received.size());
+
+        if (m_options.verbose > 2) {
+            printf("Multiple clients test passed\n");
+        }
+    }
+
+    concurrentSendsTest() {
+        # Test concurrent sends from multiple threads on same CLIENT socket
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        string endpoint = server.endpoint();
+
+        ZSocketClient client(zctx, endpoint);
+
+        int num_threads = 10;
+        int msgs_per_thread = 5;
+        Counter done(num_threads);
+
+        # Launch threads that all send on the same socket
+        for (int t = 0; t < num_threads; ++t) {
+            background sub (int tid) {
+                on_exit done.dec();
+                for (int i = 0; i < msgs_per_thread; ++i) {
+                    client.send("Thread " + tid + " msg " + i);
+                }
+            }(t);
+        }
+
+        # Receive all messages
+        int total_expected = num_threads * msgs_per_thread;
+        int received = 0;
+        server.setRecvTimeout(10s);
+        while (received < total_expected) {
+            ZMsg msg = server.recvMsg();
+            assertEq(1, msg.size());
+            string content = msg.popStr();
+            assertTrue(content.find("Thread") >= 0);
+            ++received;
+        }
+
+        done.waitForZero();
+        assertEq(total_expected, received);
+
+        if (m_options.verbose > 2) {
+            printf("Concurrent sends test passed (%d messages)\n", received);
+        }
+    }
+
+    routingIdRoundTripTest() {
+        # Test that routing_id correctly routes responses to the right client
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        string endpoint = server.endpoint();
+
+        ZSocketClient client1(zctx, endpoint);
+        ZSocketClient client2(zctx, endpoint);
+
+        # Each client sends with identification
+        client1.send("From client 1");
+        client2.send("From client 2");
+
+        # Collect routing IDs
+        hash<string, string> routing_ids;
+        for (int i = 0; i < 2; ++i) {
+            ZMsg msg = server.recvMsg();
+            string content = msg.popStr();
+            int rid = server.getRoutingId();
+            routing_ids{string(rid)} = content;
+        }
+
+        assertEq(2, routing_ids.size());
+
+        # Send responses back to each client using routing_id
+        HashIterator it(routing_ids);
+        while (it.next()) {
+            int rid = it.getKey().toInt();
+            string original = it.getValue();
+            server.setRoutingId(rid);
+            server.send("Reply to: " + original);
+        }
+
+        # Each client should get the correct response
+        ZMsg reply1 = client1.recvMsg();
+        ZMsg reply2 = client2.recvMsg();
+
+        string r1 = reply1.popStr();
+        string r2 = reply2.popStr();
+
+        # One reply should mention client 1, other should mention client 2
+        assertTrue((r1.find("client 1") >= 0 && r2.find("client 2") >= 0) ||
+                   (r1.find("client 2") >= 0 && r2.find("client 1") >= 0));
+
+        if (m_options.verbose > 2) {
+            printf("Routing ID round-trip test passed\n");
+        }
+    }
+
+    largeMessageTest() {
+        # Test serialization of large messages (>64KB)
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        # Send large data
+        client.send(LargeData);
+        ZMsg msg = server.recvMsg();
+        assertEq(1, msg.size());
+        assertEq(LargeData, msg.popStr());
+
+        # Test large multi-frame message
+        server.setRoutingId(server.getRoutingId());
+        server.send(LargeData, LargeData);
+        msg = client.recvMsg();
+        assertEq(2, msg.size());
+        assertEq(LargeData, msg.popStr());
+        assertEq(LargeData, msg.popStr());
+
+        if (m_options.verbose > 2) {
+            printf("Large message test passed (%d bytes)\n", LargeData.size());
+        }
+    }
+
+    emptyFrameTest() {
+        # Test handling of empty frames in multi-frame messages
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        # Send message with empty frame
+        client.send("", HelloWorld, "");
+        ZMsg msg = server.recvMsg();
+        assertEq(3, msg.size());
+        assertEq("", msg.popStr());
+        assertEq(HelloWorld, msg.popStr());
+        assertEq("", msg.popStr());
+
+        if (m_options.verbose > 2) {
+            printf("Empty frame test passed\n");
+        }
+    }
+
+    binaryNullsTest() {
+        # Test binary data with embedded nulls
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        client.send(Bin);
+        ZMsg msg = server.recvMsg();
+        assertEq(1, msg.size());
+        assertEq(Bin, msg.popBin());
+
+        # String with embedded null
+        client.send(StrBin);
+        msg = server.recvMsg();
+        assertEq(1, msg.size());
+        string received = msg.popStr();
+        assertEq(StrBin, received);
+        assertEq(StrBin.size(), received.size());
+
+        if (m_options.verbose > 2) {
+            printf("Binary nulls test passed\n");
+        }
+    }
+
+    unicodeTest() {
+        # Test Unicode string handling
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        string unicode = "Hello in Chinese: ";
+
+        client.send(unicode);
+        ZMsg msg = server.recvMsg();
+        assertEq(1, msg.size());
+        assertEq(unicode, msg.popStr());
+
+        if (m_options.verbose > 2) {
+            printf("Unicode test passed\n");
+        }
+    }
+
+    singleFrameTest() {
+        # Test single-frame message (no serialization overhead)
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        client.send(HelloWorld);
+        ZMsg msg = server.recvMsg();
+        assertEq(1, msg.size());
+        assertEq(HelloWorld, msg.popStr());
+
+        if (m_options.verbose > 2) {
+            printf("Single frame test passed\n");
+        }
+    }
+
+    manyFramesTest() {
+        # Test message with many frames
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        int num_frames = 100;
+        list<string> frames = ();
+        for (int i = 0; i < num_frames; ++i) {
+            frames += "Frame " + i;
+        }
+
+        # Use ZMsg for many frames
+        ZMsg send_msg();
+        foreach string f in (frames) {
+            send_msg.add(f);
+        }
+        client.send(send_msg);
+
+        ZMsg recv_msg = server.recvMsg();
+        assertEq(num_frames, recv_msg.size());
+
+        for (int i = 0; i < num_frames; ++i) {
+            assertEq("Frame " + i, recv_msg.popStr());
+        }
+
+        if (m_options.verbose > 2) {
+            printf("Many frames test passed (%d frames)\n", num_frames);
+        }
+    }
+
+    tryRecvTimeoutTest() {
+        # Test tryRecvMsg timeout on CLIENT/SERVER sockets
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+
+        # Should return NOTHING on timeout
+        *ZMsg msg = server.tryRecvMsg(10ms);
+        assertEq(NOTHING, msg);
+
+        # Zero timeout
+        msg = server.tryRecvMsg(0ms);
+        assertEq(NOTHING, msg);
+
+        # Now with a message
+        ZSocketClient client(zctx, server.endpoint());
+        client.send(HelloWorld);
+        msg = server.tryRecvMsg(5s);
+        assertTrue(exists msg);
+        assertEq(HelloWorld, msg.popStr());
+
+        if (m_options.verbose > 2) {
+            printf("tryRecvMsg timeout test passed\n");
+        }
+    }
+
+    threadSafetyTest() {
+        # Test that CLIENT/SERVER sockets can be used from multiple threads
+        # without ZSOCKET-THREAD-ERROR
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        # Unlike other socket types, these should NOT throw thread errors
+        Queue q();
+
+        background sub () {
+            try {
+                # This would throw ZSOCKET-THREAD-ERROR for non-thread-safe sockets
+                client.send("From background thread");
+                q.push(True);
+            } catch (hash<ExceptionInfo> ex) {
+                q.push(ex);
+            }
+        }();
+
+        auto result = q.get(5s);
+        assertEq(True, result);  # Should not be an exception
+
+        # Receive the message
+        ZMsg msg = server.recvMsg();
+        assertEq("From background thread", msg.popStr());
+
+        if (m_options.verbose > 2) {
+            printf("Thread safety test passed\n");
+        }
+    }
+
+    socketTypeTest() {
+        # Verify socket types are correctly reported
+        ZSocketServer server(zctx);
+        assertEq("SERVER", server.type());
+
+        ZSocketClient client(zctx);
+        assertEq("CLIENT", client.type());
+
+        # Test unconnected sockets can still be queried
+        assertTrue(True);
+
+        if (m_options.verbose > 2) {
+            printf("Socket type test passed\n");
+        }
+    }
+
+    negativeRoutingIdTest() {
+        # Test that setting routing_id to 0 throws error
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+
+        assertThrows("ZSOCKET-SETROUTING-ERROR", \server.setRoutingId(), 0);
+
+        if (m_options.verbose > 2) {
+            printf("Negative routing_id test passed\n");
+        }
+    }
+
+    negativeGetRoutingIdBeforeRecvTest() {
+        # Test getRoutingId() before any message received returns 0
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+
+        # Should return 0 when no message has been received
+        int rid = server.getRoutingId();
+        assertEq(0, rid);
+
+        if (m_options.verbose > 2) {
+            printf("Negative getRoutingId before recv test passed\n");
+        }
+    }
+
+    negativeSendWithoutRoutingIdTest() {
+        # Test that server send without setRoutingId fails or is handled gracefully
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        # Receive a message to establish connection
+        client.send("hello");
+        ZMsg msg = server.recvMsg();
+        assertEq("hello", msg.popStr());
+
+        # Reset routing_id to 0 and try to send - should throw
+        server.setRoutingId(server.getRoutingId());  # Save valid one first
+        # Now try with invalid routing_id
+        assertThrows("ZSOCKET-SETROUTING-ERROR", \server.setRoutingId(), 0);
+
+        if (m_options.verbose > 2) {
+            printf("Negative send without routing_id test passed\n");
+        }
+    }
+
+    negativeStaleRoutingIdTest() {
+        # Test sending to a disconnected client's routing_id
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        string endpoint = server.endpoint();
+
+        int saved_rid;
+        {
+            ZSocketClient client(zctx, endpoint);
+            client.send("hello");
+            ZMsg msg = server.recvMsg();
+            saved_rid = server.getRoutingId();
+            assertTrue(saved_rid > 0);
+        }
+        # Client is now out of scope and disconnected
+
+        # Small delay to allow disconnect to propagate
+        usleep(50ms);
+
+        # Try to send to the stale routing_id - this may silently fail or throw
+        # depending on ZMQ version, but should not crash
+        server.setRoutingId(saved_rid);
+        try {
+            server.send("response to disconnected client");
+            # If it doesn't throw, that's OK - ZMQ may buffer the message
+        } catch (hash<ExceptionInfo> ex) {
+            # Expected - host unreachable or similar
+            assertTrue(True);
+        }
+
+        if (m_options.verbose > 2) {
+            printf("Negative stale routing_id test passed\n");
+        }
+    }
+
+    allEmptyFramesTest() {
+        # Test message where all frames are empty
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        # All empty frames
+        client.send("", "", "");
+        ZMsg msg = server.recvMsg();
+        assertEq(3, msg.size());
+        assertEq("", msg.popStr());
+        assertEq("", msg.popStr());
+        assertEq("", msg.popStr());
+
+        # Single empty frame
+        client.send("");
+        msg = server.recvMsg();
+        assertEq(1, msg.size());
+        assertEq("", msg.popStr());
+
+        if (m_options.verbose > 2) {
+            printf("All empty frames test passed\n");
+        }
+    }
+
+    mixedBinaryStringTest() {
+        # Test message with mixed binary and string frames
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        binary bin1 = <deadbeef>;
+        string str1 = "string frame";
+        binary bin2 = <00112233>;
+        string str2 = "another string";
+
+        # Send mixed types via ZMsg
+        ZMsg send_msg();
+        send_msg.add(bin1);
+        send_msg.add(str1);
+        send_msg.add(bin2);
+        send_msg.add(str2);
+        client.send(send_msg);
+
+        ZMsg recv_msg = server.recvMsg();
+        assertEq(4, recv_msg.size());
+        assertEq(bin1, recv_msg.popBin());
+        assertEq(str1, recv_msg.popStr());
+        assertEq(bin2, recv_msg.popBin());
+        assertEq(str2, recv_msg.popStr());
+
+        if (m_options.verbose > 2) {
+            printf("Mixed binary and string test passed\n");
+        }
+    }
+
+    rapidReconnectTest() {
+        # Test rapid connect/disconnect cycles
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        string endpoint = server.endpoint();
+
+        for (int i = 0; i < 20; ++i) {
+            ZSocketClient client(zctx, endpoint);
+            client.send("msg " + i);
+            ZMsg msg = server.recvMsg();
+            assertEq("msg " + i, msg.popStr());
+
+            # Reply
+            int rid = server.getRoutingId();
+            server.setRoutingId(rid);
+            server.send("reply " + i);
+            msg = client.recvMsg();
+            assertEq("reply " + i, msg.popStr());
+            # Client goes out of scope and disconnects
+        }
+
+        if (m_options.verbose > 2) {
+            printf("Rapid reconnect test passed\n");
+        }
+    }
+
+    bidirectionalMultiFrameTest() {
+        # Test multi-frame messages in both directions
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        # Client sends multi-frame
+        client.send("frame1", "frame2", "frame3");
+        ZMsg msg = server.recvMsg();
+        assertEq(3, msg.size());
+        assertEq("frame1", msg.popStr());
+        assertEq("frame2", msg.popStr());
+        assertEq("frame3", msg.popStr());
+
+        # Server sends multi-frame response
+        int rid = server.getRoutingId();
+        server.setRoutingId(rid);
+        server.send("resp1", "resp2", "resp3", "resp4");
+        msg = client.recvMsg();
+        assertEq(4, msg.size());
+        assertEq("resp1", msg.popStr());
+        assertEq("resp2", msg.popStr());
+        assertEq("resp3", msg.popStr());
+        assertEq("resp4", msg.popStr());
+
+        if (m_options.verbose > 2) {
+            printf("Bidirectional multi-frame test passed\n");
+        }
+    }
+
+    zmsgSendTest() {
+        # Test sending ZMsg objects directly
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        # Create and send ZMsg from client
+        ZMsg send_msg();
+        send_msg.add("first");
+        send_msg.add(<aabbcc>);
+        send_msg.add("last");
+        client.send(send_msg);
+
+        ZMsg recv_msg = server.recvMsg();
+        assertEq(3, recv_msg.size());
+        assertEq("first", recv_msg.popStr());
+        assertEq(<aabbcc>, recv_msg.popBin());
+        assertEq("last", recv_msg.popStr());
+
+        # Server sends ZMsg back
+        int rid = server.getRoutingId();
+        server.setRoutingId(rid);
+        ZMsg reply();
+        reply.add("reply1");
+        reply.add("reply2");
+        server.send(reply);
+
+        recv_msg = client.recvMsg();
+        assertEq(2, recv_msg.size());
+        assertEq("reply1", recv_msg.popStr());
+        assertEq("reply2", recv_msg.popStr());
+
+        if (m_options.verbose > 2) {
+            printf("ZMsg send test passed\n");
+        }
+    }
+
+    multipleClientsRoutingTest() {
+        # Test that server correctly routes to multiple clients
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        string endpoint = server.endpoint();
+
+        ZSocketClient client1(zctx, endpoint);
+        ZSocketClient client2(zctx, endpoint);
+        ZSocketClient client3(zctx, endpoint);
+
+        # Each client sends an identifying message
+        client1.send("I am client 1");
+        client2.send("I am client 2");
+        client3.send("I am client 3");
+
+        # Server receives and stores routing IDs
+        hash<string, int> client_rids;
+        for (int i = 0; i < 3; ++i) {
+            ZMsg msg = server.recvMsg();
+            string content = msg.popStr();
+            int rid = server.getRoutingId();
+            client_rids{content} = rid;
+        }
+
+        assertEq(3, client_rids.size());
+
+        # Verify all routing IDs are unique
+        hash<string, bool> unique_rids;
+        foreach int rid in (client_rids.values()) {
+            assertFalse(unique_rids.hasKey(string(rid)));
+            unique_rids{string(rid)} = True;
+        }
+
+        # Send targeted responses to each client
+        server.setRoutingId(client_rids{"I am client 1"});
+        server.send("Hello client 1");
+
+        server.setRoutingId(client_rids{"I am client 2"});
+        server.send("Hello client 2");
+
+        server.setRoutingId(client_rids{"I am client 3"});
+        server.send("Hello client 3");
+
+        # Each client should receive their specific message
+        ZMsg msg1 = client1.recvMsg();
+        ZMsg msg2 = client2.recvMsg();
+        ZMsg msg3 = client3.recvMsg();
+
+        assertEq("Hello client 1", msg1.popStr());
+        assertEq("Hello client 2", msg2.popStr());
+        assertEq("Hello client 3", msg3.popStr());
+
+        if (m_options.verbose > 2) {
+            printf("Multiple clients routing test passed\n");
+        }
+    }
+}

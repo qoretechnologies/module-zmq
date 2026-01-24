@@ -10,6 +10,7 @@
     - @ref Qore::ZMQ::ZFrame "ZFrame"
     - @ref Qore::ZMQ::ZMsg "ZMsg"
     - @ref Qore::ZMQ::ZSocket "ZSocket"
+      - @ref Qore::ZMQ::ZSocketClient "ZSocketClient" (thread-safe, draft API)
       - @ref Qore::ZMQ::ZSocketDealer "ZSocketDealer"
       - @ref Qore::ZMQ::ZSocketPair "ZSocketPair"
       - @ref Qore::ZMQ::ZSocketPub "ZSocketPub"
@@ -18,6 +19,7 @@
       - @ref Qore::ZMQ::ZSocketRep "ZSocketRep"
       - @ref Qore::ZMQ::ZSocketReq "ZSocketReq"
       - @ref Qore::ZMQ::ZSocketRouter "ZSocketRouter"
+      - @ref Qore::ZMQ::ZSocketServer "ZSocketServer" (thread-safe, draft API)
       - @ref Qore::ZMQ::ZSocketStream "ZSocketStream"
       - @ref Qore::ZMQ::ZSocketSub "ZSocketSub"
       - @ref Qore::ZMQ::ZSocketXPub "ZSocketXPub"
@@ -143,7 +145,119 @@ client.send(HelloWorld);
 ZMsg msg = server.recvMsg();
     @endcode
 
+    @section zmqthreadsafe Thread-Safe Sockets (Draft API)
+
+    The \c CLIENT and \c SERVER socket types are thread-safe - multiple threads can safely
+    call send() and recv() on the same socket concurrently without external locking.
+    These socket types require libzmq 4.2+ built with the draft API enabled.
+
+    @note These sockets are only available when the module is built with \c -DQORE_BUILD_ZMQ_DRAFT=1
+
+    @subsection zmqclientserver CLIENT/SERVER Sockets
+
+    The @ref Qore::ZMQ::ZSocketClient "ZSocketClient" and @ref Qore::ZMQ::ZSocketServer "ZSocketServer"
+    classes provide thread-safe messaging:
+
+    - \c CLIENT sockets connect to \c SERVER sockets (like DEALER connects to ROUTER)
+    - \c SERVER sockets bind and accept connections (like ROUTER binds)
+    - Unlike DEALER/ROUTER, these sockets are fully thread-safe
+    - \c SERVER uses routing_id instead of identity frames for client addressing
+
+    @par CLIENT/SERVER Example:
+    @code{.py}
+# Create a SERVER socket (binds by default)
+ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+printf("Server bound to: %s\n", server.endpoint());
+
+# Create a CLIENT socket (connects by default)
+ZSocketClient client(zctx, server.endpoint());
+
+# Send from client (multiple threads can call this safely)
+client.send("request data");
+
+# Receive on server
+ZMsg msg = server.recvMsg();
+string data = msg.popStr();
+
+# Get routing_id for response
+int routing_id = server.getRoutingId();
+
+# Send response to specific client
+server.setRoutingId(routing_id);
+server.send("response data");
+
+# Receive response on client
+msg = client.recvMsg();
+    @endcode
+
+    @subsection zmqroutingid Routing ID vs Identity Frames
+
+    Unlike ROUTER sockets which use identity frames to route messages, SERVER sockets use
+    a 32-bit routing_id:
+
+    - The routing_id is automatically assigned when a CLIENT connects
+    - Use @ref Qore::ZMQ::ZSocketServer::getRoutingId() "ZSocketServer::getRoutingId()" after receiving to get the sender's ID
+    - Use @ref Qore::ZMQ::ZSocketServer::setRoutingId() "ZSocketServer::setRoutingId()" before sending to route to a specific client
+
+    @subsection zmqthreadsafeserialization Multi-Frame Serialization
+
+    CLIENT/SERVER sockets only support single-frame messages. When using the variadic
+    @ref Qore::ZMQ::ZSocket::send() "ZSocket::send()" method with multiple arguments,
+    the frames are automatically serialized into a single frame and deserialized
+    transparently on receive. This makes CLIENT/SERVER sockets API-compatible with
+    DEALER/ROUTER for most use cases.
+
+    @subsection zmqthreadsafemigration Migration from DEALER/ROUTER
+
+    To migrate from DEALER/ROUTER to CLIENT/SERVER:
+
+    1. Replace @ref Qore::ZMQ::ZSocketDealer "ZSocketDealer" with @ref Qore::ZMQ::ZSocketClient "ZSocketClient"
+    2. Replace @ref Qore::ZMQ::ZSocketRouter "ZSocketRouter" with @ref Qore::ZMQ::ZSocketServer "ZSocketServer"
+    3. Replace identity frame handling with routing_id methods
+    4. Remove any external thread synchronization (no longer needed)
+
+    @par Migration Example:
+    @code{.py}
+# Before (DEALER/ROUTER):
+ZSocketRouter router(zctx, identity, endpoint);
+ZMsg msg = router.recvMsg();
+binary sender_id = msg.popBin();  # Identity frame
+string data = msg.popStr();
+# Response
+msg = new ZMsg(sender_id, response);
+router.send(msg);
+
+# After (CLIENT/SERVER):
+ZSocketServer server(zctx, endpoint);
+ZMsg msg = server.recvMsg();
+string data = msg.popStr();       # No identity frame
+int routing_id = server.getRoutingId();
+# Response
+server.setRoutingId(routing_id);
+server.send(response);
+    @endcode
+
     @section zmqreleasenotes zmq Module Release Notes
+
+    @subsection zmq_1_2_0 zmq Module Version 1.2.0
+    <b>New Features and Enhancements:</b>
+    - Added @ref Qore::ZMQ::ZSocketClient "ZSocketClient" class - thread-safe CLIENT socket implementation
+      that can be safely accessed from multiple threads without external locking
+      (requires libzmq draft API)
+    - Added @ref Qore::ZMQ::ZSocketServer "ZSocketServer" class - thread-safe SERVER socket implementation
+      with routing_id-based client addressing (requires libzmq draft API)
+    - Added @ref Qore::ZMQ::ZSocketServer::getRoutingId() "ZSocketServer::getRoutingId()": get routing_id
+      from last received message
+    - Added @ref Qore::ZMQ::ZSocketServer::setRoutingId() "ZSocketServer::setRoutingId()": set routing_id
+      for next send operation
+    - Transparent multi-frame serialization for CLIENT/SERVER sockets - variadic send() and recvMsg()
+      automatically serialize/deserialize multiple frames into single frames for CLIENT/SERVER sockets
+    - Added @ref Qore::ZMQ::HAVE_ZMQ_DRAFT_APIS "HAVE_ZMQ_DRAFT_APIS" constant for feature detection
+
+    <b>Notes:</b>
+    - CLIENT/SERVER sockets require libzmq 4.2+ with draft API enabled
+    - Build with \c -DQORE_BUILD_ZMQ_DRAFT=1 to enable draft API support
+    - These sockets are thread-safe and can be shared across threads without external locking
 
     @subsection zmq_1_1_0 zmq Module Version 1.1.0
     <b>New Features and Enhancements:</b>

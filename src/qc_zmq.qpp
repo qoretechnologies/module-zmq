@@ -37,11 +37,8 @@
 #define _Q_ZFRAME_META 0
 #endif
 
-#ifdef QORE_BUILD_ZMQ_DRAFT
+// Draft API is now required for building the zmq module
 #define _Q_HAVE_ZMQ_DRAFT_APIS 1
-#else
-#define _Q_HAVE_ZMQ_DRAFT_APIS 0
-#endif
 
 #ifdef HAVE_ZMQ_PROXY_STEERABLE
 #define _Q_HAVE_ZMQ_PROXY_STEERABLE 1

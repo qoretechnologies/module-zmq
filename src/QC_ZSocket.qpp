@@ -28,6 +28,8 @@
 #include "QC_ZMsg.h"
 #include "QC_ZFrame.h"
 
+#include "QC_ZSocketServer.h"
+
 #include <zmsg.h>
 #include <zframe.h>
 #include <zmq.h>
@@ -76,6 +78,108 @@ static void send_empty_msg(void* zsock, ExceptionSink* xsink) {
         }
         break;
     }
+}
+
+// Helper function to check if a socket type uses single-frame serialization
+static bool isThreadSafeSocketType(int sock_type) {
+    return sock_type == ZMQ_CLIENT || sock_type == ZMQ_SERVER;
+}
+
+// Serialize multiple data frames into a single binary blob
+// Format: [frame_count:4 bytes][len1:4 bytes][data1][len2:4 bytes][data2]...
+static SimpleRefHolder<BinaryNode> serializeFrames(const QoreListNode* args, size_t size, ExceptionSink* xsink) {
+    std::vector<std::pair<const char*, size_t>> frames;
+    frames.reserve(size);
+
+    for (size_t i = 0; i < size; ++i) {
+        QoreValue arg = args->retrieveEntry(i);
+        const char* ptr;
+        size_t len;
+        if (q_get_data(arg, ptr, len)) {
+            xsink->raiseException("ZSOCKET-SEND-DATA-ERROR",
+                "expecting 'string' or 'binary' argument type in position %d/%d; got '%s' instead",
+                (int)i + 1, (int)size, arg.getTypeName());
+            return nullptr;
+        }
+        frames.push_back({ptr, len});
+    }
+
+    // Create binary buffer
+    SimpleRefHolder<BinaryNode> result(new BinaryNode());
+
+    // Write frame count
+    uint32_t frame_count = (uint32_t)size;
+    result->append(&frame_count, 4);
+
+    // Write each frame
+    for (const auto& frame : frames) {
+        uint32_t len = (uint32_t)frame.second;
+        result->append(&len, 4);
+        if (len > 0) {
+            result->append(frame.first, len);
+        }
+    }
+
+    return result;
+}
+
+// Deserialize a single binary blob into a ZMsg with multiple frames
+// Format: [frame_count:4 bytes][len1:4 bytes][data1][len2:4 bytes][data2]...
+static zmsg_t* deserializeFrames(const void* data, size_t data_size, ExceptionSink* xsink) {
+    if (data_size < 4) {
+        // Single frame with raw data (not serialized)
+        zmsg_t* msg = zmsg_new();
+        if (data_size > 0) {
+            zframe_t* frame = zframe_new(data, data_size);
+            zmsg_append(msg, &frame);
+        }
+        return msg;
+    }
+
+    const uint8_t* ptr = (const uint8_t*)data;
+    const uint8_t* end = ptr + data_size;
+
+    // Read frame count
+    uint32_t frame_count;
+    memcpy(&frame_count, ptr, 4);
+    ptr += 4;
+
+    // Sanity check - if frame_count is unreasonably large, treat as raw data
+    if (frame_count > 10000 || (frame_count > 0 && ptr + 4 > end)) {
+        zmsg_t* msg = zmsg_new();
+        zframe_t* frame = zframe_new(data, data_size);
+        zmsg_append(msg, &frame);
+        return msg;
+    }
+
+    zmsg_t* msg = zmsg_new();
+
+    for (uint32_t i = 0; i < frame_count; ++i) {
+        if (ptr + 4 > end) {
+            xsink->raiseException("ZSOCKET-DESERIALIZE-ERROR",
+                "malformed serialized frame data: truncated length at frame %d", (int)i);
+            zmsg_destroy(&msg);
+            return nullptr;
+        }
+
+        uint32_t len;
+        memcpy(&len, ptr, 4);
+        ptr += 4;
+
+        if (ptr + len > end) {
+            xsink->raiseException("ZSOCKET-DESERIALIZE-ERROR",
+                "malformed serialized frame data: truncated data at frame %d (expected %d bytes, have %d)",
+                (int)i, (int)len, (int)(end - ptr));
+            zmsg_destroy(&msg);
+            return nullptr;
+        }
+
+        zframe_t* frame = zframe_new(ptr, len);
+        zmsg_append(msg, &frame);
+        ptr += len;
+    }
+
+    return msg;
 }
 
 //! ZeroMQ poll info hash
@@ -1937,6 +2041,64 @@ nothing ZSocket::send(Qore::ZMQ::ZMsg[QoreZMsg] msg) {
         if (zsock->check(xsink))
             return QoreValue();
 
+        // For CLIENT/SERVER sockets, serialize all frames into a single frame
+        int sock_type = zsock->getType();
+        if (isThreadSafeSocketType(sock_type)) {
+            // Count frames and calculate total size
+            size_t frame_count = 0;
+            size_t total_size = 4;  // frame count header
+
+            for (zframe_t* frame = zmsg_first(**msg); frame; frame = zmsg_next(**msg)) {
+                ++frame_count;
+                total_size += 4 + zframe_size(frame);
+            }
+
+            // Create serialized buffer
+            SimpleRefHolder<BinaryNode> serialized(new BinaryNode());
+            // Note: don't use preallocate() as it adds to size, not just capacity
+
+            // Write frame count
+            uint32_t fc = (uint32_t)frame_count;
+            serialized->append(&fc, 4);
+
+            // Write each frame
+            for (zframe_t* frame = zmsg_first(**msg); frame; frame = zmsg_next(**msg)) {
+                uint32_t len = (uint32_t)zframe_size(frame);
+                serialized->append(&len, 4);
+                if (len > 0) {
+                    serialized->append(zframe_data(frame), len);
+                }
+            }
+
+            // For SERVER sockets, set the routing_id on the outgoing message
+            zmq_msg_t zmsg;
+            zmq_msg_init_size(&zmsg, serialized->size());
+            memcpy(zmq_msg_data(&zmsg), serialized->getPtr(), serialized->size());
+
+            if (sock_type == ZMQ_SERVER) {
+                uint32_t routing_id = static_cast<QoreServerZSock*>(zsock)->getRoutingId();
+                if (routing_id != 0) {
+                    zmq_msg_set_routing_id(&zmsg, routing_id);
+                }
+            }
+
+            while (true) {
+                int rc = zmq_msg_send(&zmsg, **zsock, 0);
+                if (rc < 0) {
+                    if (errno == EINTR)
+                        continue;
+                    zmq_msg_close(&zmsg);
+                    zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error in ZSocket::send(%s)", obj_msg->getClassName());
+                    break;
+                }
+                break;
+            }
+            // zmsg_send consumes the message, so we need to destroy it explicitly
+            zmsg_destroy(msg->getPtr());
+            const_cast<QoreObject*>(obj_msg)->doDelete(xsink);
+            return QoreValue();
+        }
+
         while (true) {
             int rc = zmsg_send(msg->getPtr(), **zsock);
             if (rc < 0) {
@@ -2083,6 +2245,94 @@ ZMsg ZSocket::recvMsg() {
     if (qore_check_io_interrupt(xsink))
         return QoreValue();
 
+    // For CLIENT/SERVER sockets, use single-frame receive with deserialization
+    int sock_type = zsock->getType();
+    if (isThreadSafeSocketType(sock_type)) {
+        zmq_msg_t zmsg;
+        zmq_msg_init(&zmsg);
+
+        // Use polling with interrupt checks if sandbox manager exists
+        QoreSandboxManager* sm = runtime_get_sandbox_manager();
+        if (sm) {
+            const int poll_interval_ms = 500;
+
+            // Save current timeout
+            int old_timeout;
+            size_t len = sizeof(old_timeout);
+            if (zsock->getSocketOption(ZMQ_RCVTIMEO, &old_timeout, &len)) {
+                zmq_msg_close(&zmsg);
+                zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error getting receive timeout in ZSocket::recvMsg()");
+                return QoreValue();
+            }
+
+            // Set polling timeout
+            int poll_timeout = poll_interval_ms;
+            if (zsock->setSocketOption(ZMQ_RCVTIMEO, &poll_timeout, sizeof(poll_timeout))) {
+                zmq_msg_close(&zmsg);
+                zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error setting receive timeout in ZSocket::recvMsg()");
+                return QoreValue();
+            }
+
+            while (true) {
+                // Check for interrupt
+                if (sm->isInterruptRequested()) {
+                    zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+                    zmq_msg_close(&zmsg);
+                    xsink->raiseException("PROGRAM-INTERRUPTED", "program execution was interrupted while waiting in recvMsg()");
+                    return QoreValue();
+                }
+
+                int rc = zmq_msg_recv(&zmsg, **zsock, 0);
+                if (rc >= 0) {
+                    zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+                    break;
+                }
+
+                if (errno == EINTR)
+                    continue;
+                if (errno == EAGAIN)
+                    continue;  // Timeout - continue polling
+
+                zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+                zmq_msg_close(&zmsg);
+                zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error in ZSocket::recvMsg()");
+                return QoreValue();
+            }
+        } else {
+            // No sandbox manager - simple blocking receive
+            while (true) {
+                int rc = zmq_msg_recv(&zmsg, **zsock, 0);
+                if (rc >= 0)
+                    break;
+                if (errno == EINTR)
+                    continue;
+                zmq_msg_close(&zmsg);
+                if (errno == EAGAIN)
+                    zmq_error(xsink, "ZSOCKET-TIMEOUT-ERROR", "timeout in ZSocket::recvMsg()");
+                else
+                    zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error in ZSocket::recvMsg()");
+                return QoreValue();
+            }
+        }
+
+        // For SERVER sockets, capture the routing_id
+        if (sock_type == ZMQ_SERVER) {
+            uint32_t routing_id = zmq_msg_routing_id(&zmsg);
+            static_cast<QoreServerZSock*>(zsock)->setRoutingId(routing_id);
+        }
+
+        // Deserialize the single frame into multiple frames
+        void* data = zmq_msg_data(&zmsg);
+        size_t data_size = zmq_msg_size(&zmsg);
+        zmsg_t* msg = deserializeFrames(data, data_size, xsink);
+        zmq_msg_close(&zmsg);
+
+        if (!msg)
+            return QoreValue();
+
+        return new QoreObject(QC_ZMSG, getProgram(), new QoreZMsg(msg));
+    }
+
     zmsg_t* msg;
 
     // Use polling with interrupt checks if sandbox manager exists
@@ -2194,6 +2444,50 @@ if (!exists msg) {
         zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
         zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error setting receive timeout in ZSocket::tryRecvMsg()");
         return QoreValue();
+    }
+
+    // For CLIENT/SERVER sockets, use single-frame receive with deserialization
+    int sock_type = zsock->getType();
+    if (isThreadSafeSocketType(sock_type)) {
+        zmq_msg_t zmsg;
+        zmq_msg_init(&zmsg);
+
+        int recv_errno;
+        while (true) {
+            int rc = zmq_msg_recv(&zmsg, **zsock, 0);
+            recv_errno = errno;
+            if (rc < 0) {
+                if (recv_errno == EINTR)
+                    continue;
+                zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+                zmq_msg_close(&zmsg);
+                if (recv_errno == EAGAIN)
+                    return QoreValue();  // timeout - return NOTHING
+                errno = recv_errno;
+                zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error in ZSocket::tryRecvMsg()");
+                return QoreValue();
+            }
+            break;
+        }
+
+        zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+
+        // For SERVER sockets, capture the routing_id
+        if (sock_type == ZMQ_SERVER) {
+            uint32_t routing_id = zmq_msg_routing_id(&zmsg);
+            static_cast<QoreServerZSock*>(zsock)->setRoutingId(routing_id);
+        }
+
+        // Deserialize the single frame into multiple frames
+        void* data = zmq_msg_data(&zmsg);
+        size_t data_size = zmq_msg_size(&zmsg);
+        zmsg_t* msg = deserializeFrames(data, data_size, xsink);
+        zmq_msg_close(&zmsg);
+
+        if (!msg)
+            return QoreValue();
+
+        return new QoreObject(QC_ZMSG, getProgram(), new QoreZMsg(msg));
     }
 
     zmsg_t* msg;
@@ -2537,6 +2831,56 @@ nothing ZSocket::send(data[doc] val, ...) {
     }
     if (!size) {
         send_empty_msg(**zsock, xsink);
+        return QoreValue();
+    }
+
+    // For CLIENT/SERVER sockets, serialize all frames into a single frame
+    int sock_type = zsock->getType();
+    if (isThreadSafeSocketType(sock_type)) {
+        SimpleRefHolder<BinaryNode> serialized = serializeFrames(args, size, xsink);
+        if (*xsink)
+            return QoreValue();
+
+        // For SERVER sockets, we need to use zmq_msg_send with routing_id set
+        if (sock_type == ZMQ_SERVER) {
+            zmq_msg_t zmsg;
+            zmq_msg_init_size(&zmsg, serialized->size());
+            memcpy(zmq_msg_data(&zmsg), serialized->getPtr(), serialized->size());
+
+            // Set the routing_id for the message
+            uint32_t routing_id = static_cast<QoreServerZSock*>(zsock)->getRoutingId();
+            zmq_msg_set_routing_id(&zmsg, routing_id);
+
+            while (true) {
+                int rc = zmq_msg_send(&zmsg, **zsock, 0);
+                if (rc < 0) {
+                    if (errno == EINTR)
+                        continue;
+                    zmq_msg_close(&zmsg);
+                    if (errno == EAGAIN)
+                        zmq_error(xsink, "ZSOCKET-TIMEOUT-ERROR", "timeout in ZSocket::send()");
+                    else
+                        zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error sending data");
+                    return QoreValue();
+                }
+                break;
+            }
+            // Note: zmq_msg_send takes ownership of the message on success
+        } else {
+            // CLIENT socket - simple send
+            while (true) {
+                int rc = zmq_send(**zsock, serialized->getPtr(), serialized->size(), 0);
+                if (rc < 0) {
+                    if (errno == EINTR)
+                        continue;
+                    if (errno == EAGAIN)
+                        zmq_error(xsink, "ZSOCKET-TIMEOUT-ERROR", "timeout in ZSocket::send()");
+                    else
+                        zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error sending data");
+                }
+                break;
+            }
+        }
         return QoreValue();
     }
 

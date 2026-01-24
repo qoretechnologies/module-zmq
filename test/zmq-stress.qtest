@@ -1,0 +1,644 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%require-types
+%strict-args
+
+%requires QUnit
+%requires Util
+%requires zmq
+
+%exec-class ZmqStressTest
+
+#! Thread stress test for ZMQ CLIENT/SERVER sockets
+/**
+    This test exercises the thread-safe CLIENT/SERVER sockets under heavy
+    concurrent load to verify correct behavior in multi-threaded environments.
+
+    The test is designed to be run in CI with short default timeouts, but can
+    be configured for extended stress testing via command-line options.
+*/
+class ZmqStressTest inherits QUnit::Test {
+    public {
+        #! Custom options for stress test configuration
+        const MyOpts = Opts + {
+            "duration": "d,duration=i",
+            "threads": "t,threads=i",
+            "clients": "C,clients=i",
+            "iterations": "I,iterations=i",
+            "msgsize": "s,msgsize=i",
+        };
+
+        #! Column width for option help formatting
+        const OptionColumn = 22;
+
+        #! Default values
+        const DefaultDuration = 2;       # seconds - short for CI
+        const DefaultThreads = 10;       # threads per client
+        const DefaultClients = 3;        # number of client sockets
+        const DefaultIterations = 100;   # messages per thread
+        const DefaultMsgSize = 1024;     # bytes per message
+    }
+
+    private {
+        #! Test configuration
+        int duration;
+        int num_threads;
+        int num_clients;
+        int iterations;
+        int msg_size;
+
+        #! Shared context
+        ZContext zctx();
+
+        #! Statistics
+        int total_sent = 0;
+        int total_received = 0;
+        int errors = 0;
+        Mutex stats_lock();
+    }
+
+    constructor() : QUnit::Test("ZmqStressTest", "1.0", \ARGV, MyOpts) {
+        # Parse options with defaults
+        duration = m_options.duration ?? DefaultDuration;
+        num_threads = m_options.threads ?? DefaultThreads;
+        num_clients = m_options.clients ?? DefaultClients;
+        iterations = m_options.iterations ?? DefaultIterations;
+        msg_size = m_options.msgsize ?? DefaultMsgSize;
+
+        if (!HAVE_ZMQ_DRAFT_APIS) {
+            printf("Skipping stress tests - draft APIs not available\n");
+            set_return_value(0);
+            return;
+        }
+
+        addTestCase("concurrent client threads", \concurrentClientThreadsTest());
+        addTestCase("concurrent server threads", \concurrentServerThreadsTest());
+        addTestCase("bidirectional stress", \bidirectionalStressTest());
+        addTestCase("rapid connect/disconnect", \rapidConnectDisconnectTest());
+        addTestCase("multi-client fan-in", \multiClientFanInTest());
+        addTestCase("large message stress", \largeMessageStressTest());
+        addTestCase("mixed frame sizes", \mixedFrameSizesTest());
+
+        set_return_value(main());
+    }
+
+    private usageIntern() {
+        TestReporter::usageIntern(OptionColumn);
+        printOption("-d,--duration=SECS", sprintf("stress test duration in seconds (default: %d)", DefaultDuration), OptionColumn);
+        printOption("-t,--threads=N", sprintf("threads per client socket (default: %d)", DefaultThreads), OptionColumn);
+        printOption("-C,--clients=N", sprintf("number of client sockets (default: %d)", DefaultClients), OptionColumn);
+        printOption("-I,--iterations=N", sprintf("messages per thread (default: %d)", DefaultIterations), OptionColumn);
+        printOption("-s,--msgsize=BYTES", sprintf("message size in bytes (default: %d)", DefaultMsgSize), OptionColumn);
+    }
+
+    private resetStats() {
+        stats_lock.lock();
+        on_exit stats_lock.unlock();
+        total_sent = 0;
+        total_received = 0;
+        errors = 0;
+    }
+
+    private addSent(int count = 1) {
+        stats_lock.lock();
+        on_exit stats_lock.unlock();
+        total_sent += count;
+    }
+
+    private addReceived(int count = 1) {
+        stats_lock.lock();
+        on_exit stats_lock.unlock();
+        total_received += count;
+    }
+
+    private addError() {
+        stats_lock.lock();
+        on_exit stats_lock.unlock();
+        ++errors;
+    }
+
+    private hash<auto> getStats() {
+        stats_lock.lock();
+        on_exit stats_lock.unlock();
+        return {
+            "sent": total_sent,
+            "received": total_received,
+            "errors": errors,
+        };
+    }
+
+    #! Test multiple threads sending on the same CLIENT socket concurrently
+    concurrentClientThreadsTest() {
+        if (m_options.verbose > 2) {
+            printf("Running concurrent client threads test: %d threads, %d iterations each\n",
+                num_threads, iterations);
+        }
+
+        resetStats();
+
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        Counter send_done(num_threads);
+        Counter recv_done(1);
+
+        # Start receiver thread
+        background sub () {
+            on_exit recv_done.dec();
+            int expected = num_threads * iterations;
+            int received = 0;
+            server.setRecvTimeout(30s);
+
+            while (received < expected) {
+                try {
+                    *ZMsg msg = server.tryRecvMsg(100ms);
+                    if (exists msg) {
+                        ++received;
+                        addReceived();
+                    }
+                } catch (hash<ExceptionInfo> ex) {
+                    addError();
+                    if (m_options.verbose > 2) {
+                        printf("Receiver error: %s: %s\n", ex.err, ex.desc);
+                    }
+                }
+            }
+        }();
+
+        # Start sender threads
+        for (int t = 0; t < num_threads; ++t) {
+            background sub (int tid) {
+                on_exit send_done.dec();
+                string msg_data = strmul("X", msg_size);
+
+                for (int i = 0; i < iterations; ++i) {
+                    try {
+                        client.send(sprintf("T%d-M%d:", tid, i) + msg_data);
+                        addSent();
+                    } catch (hash<ExceptionInfo> ex) {
+                        addError();
+                        if (m_options.verbose > 2) {
+                            printf("Sender %d error: %s: %s\n", tid, ex.err, ex.desc);
+                        }
+                    }
+                }
+            }(t);
+        }
+
+        send_done.waitForZero();
+        recv_done.waitForZero();
+
+        hash<auto> stats = getStats();
+        int expected = num_threads * iterations;
+        assertEq(expected, stats.sent, "all messages sent");
+        assertEq(expected, stats.received, "all messages received");
+        assertEq(0, stats.errors, "no errors");
+
+        if (m_options.verbose > 2) {
+            printf("Concurrent client threads: sent=%d, received=%d, errors=%d\n",
+                stats.sent, stats.received, stats.errors);
+        }
+    }
+
+    #! Test multiple threads receiving on the same SERVER socket concurrently
+    concurrentServerThreadsTest() {
+        if (m_options.verbose > 2) {
+            printf("Running concurrent server threads test: %d threads\n", num_threads);
+        }
+
+        resetStats();
+
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        int total_msgs = num_threads * iterations;
+        Sequence msg_seq();
+        Counter recv_done(num_threads);
+        Counter send_done(1);
+
+        # Start multiple receiver threads on the same server socket
+        for (int t = 0; t < num_threads; ++t) {
+            background sub (int tid) {
+                on_exit recv_done.dec();
+
+                while (True) {
+                    try {
+                        *ZMsg msg = server.tryRecvMsg(100ms);
+                        if (exists msg) {
+                            addReceived();
+                            # Send response
+                            int rid = server.getRoutingId();
+                            if (rid > 0) {
+                                server.setRoutingId(rid);
+                                server.send("ACK");
+                            }
+                        }
+                        # Check if we should stop
+                        if (getStats().received >= total_msgs) {
+                            break;
+                        }
+                    } catch (hash<ExceptionInfo> ex) {
+                        addError();
+                    }
+                }
+            }(t);
+        }
+
+        # Sender thread
+        background sub () {
+            on_exit send_done.dec();
+            string msg_data = strmul("Y", msg_size);
+
+            for (int i = 0; i < total_msgs; ++i) {
+                try {
+                    client.send(sprintf("M%d:", i) + msg_data);
+                    addSent();
+                    # Receive ACK
+                    *ZMsg ack = client.tryRecvMsg(1s);
+                } catch (hash<ExceptionInfo> ex) {
+                    addError();
+                }
+            }
+        }();
+
+        send_done.waitForZero();
+        # Give receivers time to finish
+        recv_done.waitForZero(30s);
+
+        hash<auto> stats = getStats();
+        assertEq(total_msgs, stats.sent, "all messages sent");
+        assertEq(total_msgs, stats.received, "all messages received");
+        assertEq(0, stats.errors, "no errors");
+
+        if (m_options.verbose > 2) {
+            printf("Concurrent server threads: sent=%d, received=%d, errors=%d\n",
+                stats.sent, stats.received, stats.errors);
+        }
+    }
+
+    #! Test bidirectional traffic with multiple threads on both ends
+    bidirectionalStressTest() {
+        if (m_options.verbose > 2) {
+            printf("Running bidirectional stress test: %d threads, %ds duration\n",
+                num_threads, duration);
+        }
+
+        resetStats();
+
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        date end_time = now_us() + seconds(duration);
+        Counter done(num_threads * 2);  # client + server threads
+
+        # Client sender/receiver threads
+        for (int t = 0; t < num_threads; ++t) {
+            background sub (int tid) {
+                on_exit done.dec();
+                string msg_data = strmul("C", msg_size);
+
+                while (now_us() < end_time) {
+                    try {
+                        client.send(sprintf("C%d:", tid) + msg_data);
+                        addSent();
+                        *ZMsg reply = client.tryRecvMsg(100ms);
+                        if (exists reply) {
+                            addReceived();
+                        }
+                    } catch (hash<ExceptionInfo> ex) {
+                        addError();
+                    }
+                }
+            }(t);
+        }
+
+        # Server receiver/sender threads
+        for (int t = 0; t < num_threads; ++t) {
+            background sub (int tid) {
+                on_exit done.dec();
+
+                while (now_us() < end_time) {
+                    try {
+                        *ZMsg msg = server.tryRecvMsg(100ms);
+                        if (exists msg) {
+                            addReceived();
+                            int rid = server.getRoutingId();
+                            if (rid > 0) {
+                                server.setRoutingId(rid);
+                                server.send("REPLY");
+                                addSent();
+                            }
+                        }
+                    } catch (hash<ExceptionInfo> ex) {
+                        addError();
+                    }
+                }
+            }(t);
+        }
+
+        done.waitForZero();
+
+        hash<auto> stats = getStats();
+        assertTrue(stats.sent > 0, "messages were sent");
+        assertTrue(stats.received > 0, "messages were received");
+        assertEq(0, stats.errors, "no errors");
+
+        if (m_options.verbose > 2) {
+            printf("Bidirectional stress: sent=%d, received=%d, errors=%d, duration=%ds\n",
+                stats.sent, stats.received, stats.errors, duration);
+        }
+    }
+
+    #! Test rapid socket creation and destruction
+    rapidConnectDisconnectTest() {
+        if (m_options.verbose > 2) {
+            printf("Running rapid connect/disconnect test: %d iterations\n", iterations);
+        }
+
+        resetStats();
+
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        string endpoint = server.endpoint();
+
+        Counter done(num_threads);
+
+        for (int t = 0; t < num_threads; ++t) {
+            background sub (int tid) {
+                on_exit done.dec();
+
+                for (int i = 0; i < iterations / num_threads; ++i) {
+                    try {
+                        # Create new client, send, receive, destroy
+                        ZSocketClient client(zctx, endpoint);
+                        client.send(sprintf("T%d-I%d", tid, i));
+                        addSent();
+                    } catch (hash<ExceptionInfo> ex) {
+                        addError();
+                        if (m_options.verbose > 2) {
+                            printf("Thread %d iteration %d error: %s: %s\n",
+                                tid, i, ex.err, ex.desc);
+                        }
+                    }
+                }
+            }(t);
+        }
+
+        # Receiver thread
+        Counter recv_done(1);
+        background sub () {
+            on_exit recv_done.dec();
+            int expected = iterations;
+
+            while (getStats().received < expected) {
+                try {
+                    *ZMsg msg = server.tryRecvMsg(100ms);
+                    if (exists msg) {
+                        addReceived();
+                    }
+                } catch (hash<ExceptionInfo> ex) {
+                    addError();
+                }
+            }
+        }();
+
+        done.waitForZero();
+        recv_done.waitForZero(30s);
+
+        hash<auto> stats = getStats();
+        assertEq(0, stats.errors, "no errors during rapid connect/disconnect");
+
+        if (m_options.verbose > 2) {
+            printf("Rapid connect/disconnect: sent=%d, received=%d, errors=%d\n",
+                stats.sent, stats.received, stats.errors);
+        }
+    }
+
+    #! Test multiple clients sending to single server (fan-in pattern)
+    multiClientFanInTest() {
+        if (m_options.verbose > 2) {
+            printf("Running multi-client fan-in test: %d clients, %d threads each\n",
+                num_clients, num_threads);
+        }
+
+        resetStats();
+
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        string endpoint = server.endpoint();
+
+        # Create multiple clients
+        list<ZSocketClient> clients = ();
+        for (int c = 0; c < num_clients; ++c) {
+            clients += new ZSocketClient(zctx, endpoint);
+        }
+
+        int total_threads = num_clients * num_threads;
+        int msgs_per_thread = iterations / total_threads;
+        if (msgs_per_thread < 1) msgs_per_thread = 1;
+
+        Counter send_done(total_threads);
+        Counter recv_done(1);
+
+        # Start sender threads for each client
+        for (int c = 0; c < num_clients; ++c) {
+            for (int t = 0; t < num_threads; ++t) {
+                background sub (int cid, int tid, ZSocketClient client) {
+                    on_exit send_done.dec();
+                    string msg_data = strmul("F", msg_size);
+
+                    for (int i = 0; i < msgs_per_thread; ++i) {
+                        try {
+                            client.send(sprintf("C%d-T%d-M%d:", cid, tid, i) + msg_data);
+                            addSent();
+                        } catch (hash<ExceptionInfo> ex) {
+                            addError();
+                        }
+                    }
+                }(c, t, clients[c]);
+            }
+        }
+
+        # Receiver thread
+        background sub () {
+            on_exit recv_done.dec();
+            int expected = total_threads * msgs_per_thread;
+
+            while (getStats().received < expected) {
+                try {
+                    *ZMsg msg = server.tryRecvMsg(100ms);
+                    if (exists msg) {
+                        addReceived();
+                    }
+                } catch (hash<ExceptionInfo> ex) {
+                    addError();
+                }
+            }
+        }();
+
+        send_done.waitForZero();
+        recv_done.waitForZero(30s);
+
+        hash<auto> stats = getStats();
+        int expected = total_threads * msgs_per_thread;
+        assertEq(expected, stats.sent, "all messages sent");
+        assertEq(expected, stats.received, "all messages received");
+        assertEq(0, stats.errors, "no errors");
+
+        if (m_options.verbose > 2) {
+            printf("Multi-client fan-in: clients=%d, sent=%d, received=%d, errors=%d\n",
+                num_clients, stats.sent, stats.received, stats.errors);
+        }
+    }
+
+    #! Test with large messages under concurrent load
+    largeMessageStressTest() {
+        if (m_options.verbose > 2) {
+            printf("Running large message stress test: %d threads, 100KB messages\n", num_threads);
+        }
+
+        resetStats();
+
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        # Use 100KB messages
+        int large_size = 100 * 1024;
+        string large_data = strmul("L", large_size);
+        int num_msgs = iterations / 10;  # Fewer messages since they're large
+        if (num_msgs < 10) num_msgs = 10;
+
+        Counter send_done(num_threads);
+        Counter recv_done(1);
+
+        for (int t = 0; t < num_threads; ++t) {
+            background sub (int tid) {
+                on_exit send_done.dec();
+
+                for (int i = 0; i < num_msgs / num_threads; ++i) {
+                    try {
+                        client.send(sprintf("T%d-M%d:", tid, i) + large_data);
+                        addSent();
+                    } catch (hash<ExceptionInfo> ex) {
+                        addError();
+                    }
+                }
+            }(t);
+        }
+
+        background sub () {
+            on_exit recv_done.dec();
+            int expected = num_msgs;
+
+            while (getStats().received < expected) {
+                try {
+                    *ZMsg msg = server.tryRecvMsg(1s);
+                    if (exists msg) {
+                        # Verify message integrity
+                        string content = msg.popStr();
+                        if (content.size() >= large_size) {
+                            addReceived();
+                        } else {
+                            addError();
+                        }
+                    }
+                } catch (hash<ExceptionInfo> ex) {
+                    addError();
+                }
+            }
+        }();
+
+        send_done.waitForZero();
+        recv_done.waitForZero(60s);
+
+        hash<auto> stats = getStats();
+        assertEq(0, stats.errors, "no errors with large messages");
+
+        if (m_options.verbose > 2) {
+            printf("Large message stress: sent=%d, received=%d, errors=%d, msg_size=%dKB\n",
+                stats.sent, stats.received, stats.errors, large_size / 1024);
+        }
+    }
+
+    #! Test with mixed frame sizes and counts
+    mixedFrameSizesTest() {
+        if (m_options.verbose > 2) {
+            printf("Running mixed frame sizes test: %d threads\n", num_threads);
+        }
+
+        resetStats();
+
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        Counter send_done(num_threads);
+        Counter recv_done(1);
+
+        for (int t = 0; t < num_threads; ++t) {
+            background sub (int tid) {
+                on_exit send_done.dec();
+
+                for (int i = 0; i < iterations / num_threads; ++i) {
+                    try {
+                        # Vary message structure
+                        switch (i % 5) {
+                            case 0:
+                                # Single small frame
+                                client.send("small");
+                                break;
+                            case 1:
+                                # Multiple small frames
+                                client.send("a", "b", "c", "d", "e");
+                                break;
+                            case 2:
+                                # Empty frame
+                                client.send("");
+                                break;
+                            case 3:
+                                # Large single frame
+                                client.send(strmul("X", 10000));
+                                break;
+                            case 4:
+                                # Mixed sizes
+                                client.send("tiny", strmul("M", 1000), "", strmul("L", 5000));
+                                break;
+                        }
+                        addSent();
+                    } catch (hash<ExceptionInfo> ex) {
+                        addError();
+                    }
+                }
+            }(t);
+        }
+
+        background sub () {
+            on_exit recv_done.dec();
+            int expected = iterations;
+
+            while (getStats().received < expected) {
+                try {
+                    *ZMsg msg = server.tryRecvMsg(100ms);
+                    if (exists msg) {
+                        addReceived();
+                    }
+                } catch (hash<ExceptionInfo> ex) {
+                    addError();
+                }
+            }
+        }();
+
+        send_done.waitForZero();
+        recv_done.waitForZero(30s);
+
+        hash<auto> stats = getStats();
+        assertEq(iterations, stats.sent, "all mixed messages sent");
+        assertEq(iterations, stats.received, "all mixed messages received");
+        assertEq(0, stats.errors, "no errors with mixed frames");
+
+        if (m_options.verbose > 2) {
+            printf("Mixed frame sizes: sent=%d, received=%d, errors=%d\n",
+                stats.sent, stats.received, stats.errors);
+        }
+    }
+}
