@@ -90,6 +90,9 @@ if (USE_SYSTEM_ZMQ STREQUAL "ON" OR USE_SYSTEM_ZMQ STREQUAL "AUTO")
                     zmq_ctx_term(ctx);
                     return 1;  // Draft API not available at runtime
                 }
+                // Set receive timeout to prevent hanging (2 seconds)
+                int timeout = 2000;
+                zmq_setsockopt(server, ZMQ_RCVTIMEO, &timeout, sizeof(timeout));
                 // Try to bind - this will crash if draft socket types aren't properly supported
                 int rc = zmq_bind(server, \"tcp://127.0.0.1:*\");
                 if (rc != 0) {
@@ -104,6 +107,8 @@ if (USE_SYSTEM_ZMQ STREQUAL "ON" OR USE_SYSTEM_ZMQ STREQUAL "AUTO")
                     zmq_ctx_term(ctx);
                     return 1;
                 }
+                // Set send timeout to prevent hanging
+                zmq_setsockopt(client, ZMQ_SNDTIMEO, &timeout, sizeof(timeout));
                 // Get the bound endpoint
                 char endpoint[256];
                 size_t endpoint_len = sizeof(endpoint);
@@ -130,7 +135,7 @@ if (USE_SYSTEM_ZMQ STREQUAL "ON" OR USE_SYSTEM_ZMQ STREQUAL "AUTO")
                     zmq_ctx_term(ctx);
                     return 1;
                 }
-                // Receive it
+                // Receive it (will timeout after 2 seconds if no message arrives)
                 char buf[256];
                 rc = zmq_recv(server, buf, sizeof(buf), 0);
                 if (rc != (int)strlen(test_msg)) {
@@ -236,6 +241,11 @@ else()
 
     # Ensure ZMQ draft API is enabled for czmq compilation
     add_compile_definitions(ZMQ_BUILD_DRAFT_API=1)
+
+    # On Linux, enable GNU extensions for pthread_setname_np
+    if(NOT APPLE)
+        add_compile_definitions(_GNU_SOURCE)
+    endif()
 
     # Use FetchContent_Populate + add_subdirectory with EXCLUDE_FROM_ALL
     # This prevents czmq from installing its executables which we don't build
