@@ -30,8 +30,6 @@
 
 #include "QC_ZContext.h"
 
-#include <czmq.h>
-
 #include <string>
 
 #ifndef DEBUG

@@ -1,0 +1,102 @@
+/* -*- mode: c++; indent-tabs-mode: nil -*- */
+/** @file ZSocketClient.qpp defines the ZSocketClient class */
+/*
+    QC_ZSocketClient.qpp
+
+    Qore Programming Language
+
+    Copyright (C) 2017 - 2025 Qore Technologies, s.r.o.
+
+    This library is free software; you can redistribute it and/or
+    modify it under the terms of the GNU Lesser General Public
+    License as published by the Free Software Foundation; either
+    version 2.1 of the License, or (at your option) any later version.
+
+    This library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+    Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public
+    License along with this library; if not, write to the Free Software
+    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+*/
+
+#include "QC_ZSocketClient.h"
+
+//! The ZSocketClient class implements a ZeroMQ \c CLIENT socket
+/** @par Overview
+    A socket of type \c CLIENT is used for advanced request-reply messaging. It is a
+    thread-safe socket type, meaning it can be accessed from multiple threads
+    simultaneously without external locking.
+    \n\n
+    Unlike \c DEALER sockets, \c CLIENT sockets do not use identity frames and send all
+    messages as single frames. When using the variadic @ref ZSocket::send() method with
+    multiple arguments, the frames are automatically serialized into a single frame.
+    \n\n
+    \c CLIENT sockets must be used with \c SERVER sockets. Messages are round-robined
+    among all connected servers, and each message received is fair-queued from all
+    connected peers.
+    \n\n
+    When a \c CLIENT socket enters the mute state due to having reached the high water
+    mark for all peers, or if there are no peers at all, then any send operations on
+    the socket shall block until the mute state ends or at least one peer becomes
+    available for sending.
+    \n\n
+    <b>Summary of \c CLIENT characteristics</b>
+    |!Property|!Value
+    |Compatible peer sockets|@ref ZSocketServer "SERVER"
+    |Direction|Bidirectional
+    |Send/receive pattern|Unrestricted
+    |Thread-safe|Yes
+    |Outgoing routing strategy|Round-robin
+    |Incoming routing strategy|Fair-queued
+    |Action in mute state|Block
+
+    @note
+    - This socket type requires libzmq 4.2+ with draft API enabled
+    - Unlike other socket types, this class IS designed to be accessed from multiple threads
+    - Multiple threads can safely call send() and recv() on the same socket concurrently
+    - No external locking is required
+
+    @since zmq 1.2.0 (requires libzmq draft API)
+ */
+qclass ZSocketClient [arg=QoreClientZSock* zsock; ns=Qore::ZMQ; vparent=ZSocket; dom=NETWORK];
+
+//! constructs a \c CLIENT zsocket connected to an endpoint
+/** @par Example
+    @code{.py}
+ZSocketClient client(ctx, "tcp://127.0.0.1:8001");
+    @endcode
+
+    @param ctx the context for the socket
+    @param endpoint the @ref zmqendpoints "endpoint" for the socket; the default action is connect
+
+    @throw ZSOCKET-CONSTRUCTOR-ERROR this exception is thrown if there is any error creating the socket
+    @throw ZSOCKET-CONNECT-ERROR this exception is thrown if there is any error connecting the socket
+
+    @note This socket type is thread-safe and can be accessed from multiple threads
+ */
+ZSocketClient::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx, string endpoint) {
+    ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
+    self->setPrivate(CID_ZSOCKETCLIENT, new QoreClientZSock(*ctx, endpoint->c_str(), xsink));
+}
+
+//! constructs an unconnected \c CLIENT zsocket
+/** @par Example
+    @code{.py}
+# create an unconnected CLIENT socket
+ZSocketClient client(zctx);
+client.connect("tcp://127.0.0.1:" + port);
+    @endcode
+
+    @param ctx the context for the socket
+
+    @throw ZSOCKET-CONSTRUCTOR-ERROR this exception is thrown if there is any error creating the socket
+
+    @note This socket type is thread-safe and can be accessed from multiple threads
+ */
+ZSocketClient::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx) {
+    ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
+    self->setPrivate(CID_ZSOCKETCLIENT, new QoreClientZSock(*ctx, nullptr, xsink));
+}

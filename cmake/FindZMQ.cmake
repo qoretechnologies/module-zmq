@@ -50,25 +50,57 @@ set(CZMQ_LIBRARIES ${CZMQ_LIBRARY})
 
 set(CMAKE_REQUIRED_INCLUDES ${CZMQ_INCLUDE_DIR} ${ZMQ_INCLUDE_DIRS})
 set(CMAKE_REQUIRED_LIBRARIES ${CZMQ_LIBRARY} ${ZMQ_LIBRARIES})
+set(CMAKE_REQUIRED_DEFINITIONS -DZMQ_BUILD_DRAFT_API=1)
 
-check_function_exists(zframe_meta HAVE_ZFRAME_META)
+# Use CheckCXXSourceCompiles instead of check_function_exists for more reliable detection
+# check_function_exists doesn't work well with C++ name mangling and symbol visibility
+include(CheckCXXSourceCompiles)
+
+check_cxx_source_compiles("
+#include <czmq.h>
+int main() {
+    zframe_t* f = zframe_new(\"test\", 4);
+    const char* m = zframe_meta(f, \"key\");
+    (void)m;
+    zframe_destroy(&f);
+    return 0;
+}
+" HAVE_ZFRAME_META)
 if(HAVE_ZFRAME_META)
     add_definitions(-DHAVE_ZFRAME_META)
 endif(HAVE_ZFRAME_META)
 
-check_function_exists(zmq_proxy_steerable HAVE_ZMQ_PROXY_STEERABLE)
+check_cxx_source_compiles("
+#include <zmq.h>
+int main() {
+    void* ctx = zmq_ctx_new();
+    void* frontend = zmq_socket(ctx, ZMQ_ROUTER);
+    void* backend = zmq_socket(ctx, ZMQ_DEALER);
+    void* control = zmq_socket(ctx, ZMQ_SUB);
+    // Just check it compiles and links, don't actually run
+    (void)zmq_proxy_steerable;
+    zmq_close(frontend);
+    zmq_close(backend);
+    zmq_close(control);
+    zmq_ctx_term(ctx);
+    return 0;
+}
+" HAVE_ZMQ_PROXY_STEERABLE)
 if(HAVE_ZMQ_PROXY_STEERABLE)
     add_definitions(-DHAVE_ZMQ_PROXY_STEERABLE)
 endif(HAVE_ZMQ_PROXY_STEERABLE)
 
 # check signature of zmsg_encode()
+# Modern czmq (4.x) returns zframe_t*, older versions use buffer output parameter
 check_cxx_source_compiles("
-#include <zmq.h>
+#define ZMQ_BUILD_DRAFT_API 1
 #include <czmq.h>
-#include <zmsg.h>
-#include <zframe.h>
 int main() {
-    zframe_t* f = zmsg_encode((zmsg_t*)0);
+    zmsg_t* msg = zmsg_new();
+    zframe_t* f = zmsg_encode(msg);
+    if (f) zframe_destroy(&f);
+    zmsg_destroy(&msg);
+    return 0;
 }
 " HAVE_ZMSG_ENCODE_TO_ZFRAME)
 
@@ -76,11 +108,16 @@ if(HAVE_ZMSG_ENCODE_TO_ZFRAME)
     add_definitions(-DHAVE_ZMSG_ENCODE_TO_ZFRAME)
 else(HAVE_ZMSG_ENCODE_TO_ZFRAME)
     check_cxx_source_compiles("
+#define ZMQ_BUILD_DRAFT_API 1
 #include <czmq.h>
-#include <zmsg.h>
 int main() {
-    byte* p;
-    size_t i = zmsg_encode((zmsg_t*)0, &p);
+    zmsg_t* msg = zmsg_new();
+    byte* p = 0;
+    size_t i = zmsg_encode(msg, &p);
+    (void)i;
+    free(p);
+    zmsg_destroy(&msg);
+    return 0;
 }
 " HAVE_ZMSG_ENCODE_TO_BUFFER)
 

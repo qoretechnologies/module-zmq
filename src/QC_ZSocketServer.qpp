@@ -1,0 +1,157 @@
+/* -*- mode: c++; indent-tabs-mode: nil -*- */
+/** @file ZSocketServer.qpp defines the ZSocketServer class */
+/*
+    QC_ZSocketServer.qpp
+
+    Qore Programming Language
+
+    Copyright (C) 2017 - 2025 Qore Technologies, s.r.o.
+
+    This library is free software; you can redistribute it and/or
+    modify it under the terms of the GNU Lesser General Public
+    License as published by the Free Software Foundation; either
+    version 2.1 of the License, or (at your option) any later version.
+
+    This library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+    Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public
+    License along with this library; if not, write to the Free Software
+    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+*/
+
+#include "QC_ZSocketServer.h"
+
+//! The ZSocketServer class implements a ZeroMQ \c SERVER socket
+/** @par Overview
+    A socket of type \c SERVER is used for advanced request-reply messaging. It is a
+    thread-safe socket type, meaning it can be accessed from multiple threads
+    simultaneously without external locking.
+    \n\n
+    Unlike \c ROUTER sockets, \c SERVER sockets do not use identity frames for routing.
+    Instead, they use a 32-bit \c routing_id that is assigned when a client connects.
+    The routing_id can be retrieved from received messages using @ref getRoutingId()
+    and set for outgoing messages using @ref setRoutingId().
+    \n\n
+    \c SERVER sockets must be used with \c CLIENT sockets. Messages from \c CLIENT sockets
+    are received as single frames (even if sent as multipart), and responses are similarly
+    sent as single frames.
+    \n\n
+    When a \c SERVER socket enters the mute state due to having reached the high water mark
+    for all peers, any messages sent to the socket shall be dropped until the mute state ends.
+    \n\n
+    <b>Summary of \c SERVER characteristics</b>
+    |!Property|!Value
+    |Compatible peer sockets|@ref ZSocketClient "CLIENT"
+    |Direction|Bidirectional
+    |Send/receive pattern|Unrestricted
+    |Thread-safe|Yes
+    |Outgoing routing strategy|Routing ID based
+    |Incoming routing strategy|Fair-queued
+    |Action in mute state|Drop
+
+    @note
+    - This socket type requires libzmq 4.2+ with draft API enabled
+    - Unlike other socket types, this class IS designed to be accessed from multiple threads
+    - The \c routing_id is automatically assigned by ZeroMQ when a client connects
+    - Use @ref getRoutingId() after receiving a message to get the sender's routing_id
+    - Use @ref setRoutingId() before sending to route the message to a specific client
+
+    @since zmq 1.2.0 (requires libzmq draft API)
+ */
+qclass ZSocketServer [arg=QoreServerZSock* zsock; ns=Qore::ZMQ; vparent=ZSocket; dom=NETWORK];
+
+//! constructs a \c SERVER zsocket bound to an endpoint
+/** @par Example
+    @code{.py}
+ZSocketServer server(ctx, "tcp://127.0.0.1:8001");
+    @endcode
+
+    @param ctx the context for the socket
+    @param endpoint the @ref zmqendpoints "endpoint" for the socket; the default action is bind
+
+    @throw ZSOCKET-CONSTRUCTOR-ERROR this exception is thrown if there is any error creating the socket
+    @throw ZSOCKET-BIND-ERROR this exception is thrown if there is any error binding the socket
+
+    @note This socket type is thread-safe and can be accessed from multiple threads
+ */
+ZSocketServer::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx, string endpoint) {
+    ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
+    self->setPrivate(CID_ZSOCKETSERVER, new QoreServerZSock(*ctx, endpoint->c_str(), xsink));
+}
+
+//! constructs an unbound \c SERVER zsocket
+/** @par Example
+    @code{.py}
+# create an unbound SERVER socket
+ZSocketServer server(zctx);
+int port = server.bind("tcp://127.0.0.1:*");
+    @endcode
+
+    @param ctx the context for the socket
+
+    @throw ZSOCKET-CONSTRUCTOR-ERROR this exception is thrown if there is any error creating the socket
+
+    @note This socket type is thread-safe and can be accessed from multiple threads
+ */
+ZSocketServer::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx) {
+    ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
+    self->setPrivate(CID_ZSOCKETSERVER, new QoreServerZSock(*ctx, nullptr, xsink));
+}
+
+//! Gets the routing_id from the last received message
+/** @par Example
+    @code{.py}
+ZMsg msg = server.recvMsg();
+int routing_id = server.getRoutingId();
+# ... process message ...
+# Send response to the same client
+server.setRoutingId(routing_id);
+server.send(response);
+    @endcode
+
+    @return the routing_id of the last received message, or 0 if no message has been received
+
+    The routing_id is a 32-bit unsigned integer that uniquely identifies the client
+    that sent the message. Use this value with @ref setRoutingId() to send a response
+    back to the same client.
+
+    @note For SERVER sockets, the routing_id replaces the identity frame used by ROUTER sockets
+
+    @see setRoutingId()
+*/
+int ZSocketServer::getRoutingId() {
+    return zsock->getRoutingId();
+}
+
+//! Sets the routing_id for the next send operation
+/** @par Example
+    @code{.py}
+# Receive a request
+ZMsg msg = server.recvMsg();
+int routing_id = server.getRoutingId();
+
+# Process and send response to the same client
+server.setRoutingId(routing_id);
+server.send(response_data);
+    @endcode
+
+    @param routing_id the routing_id of the client to send to
+
+    Call this method before sending a message to route it to a specific client.
+    The routing_id should be obtained from a previous call to @ref getRoutingId()
+    after receiving a message from the client.
+
+    @throw ZSOCKET-SETROUTING-ERROR if the routing_id is invalid (0)
+
+    @see getRoutingId()
+*/
+nothing ZSocketServer::setRoutingId(int routing_id) {
+    if (routing_id == 0) {
+        xsink->raiseException("ZSOCKET-SETROUTING-ERROR", "routing_id cannot be 0");
+        return QoreValue();
+    }
+    zsock->setRoutingId((uint32_t)routing_id);
+}

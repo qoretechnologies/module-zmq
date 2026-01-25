@@ -25,10 +25,9 @@
 #include <qore/Qore.h>
 #include <qore/QoreSandboxManager.h>
 
-#ifdef QORE_BUILD_ZMQ_DRAFT
+// Draft API is required for building the zmq module
 #define ZMQ_BUILD_DRAFT_API 1
 #define CZMQ_BUILD_DRAFT_API 1
-#endif
 
 #include <zmq.h>
 
