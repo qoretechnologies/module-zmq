@@ -38,6 +38,12 @@
 #include <map>
 #include <vector>
 
+#ifdef _WIN32
+#include <winsock2.h>
+#else
+#include <arpa/inet.h>
+#endif
+
 template <typename T>
 class PrivateDataListHolder {
 public:
@@ -86,8 +92,17 @@ static bool isThreadSafeSocketType(int sock_type) {
 }
 
 // Serialize multiple data frames into a single binary blob
-// Format: [frame_count:4 bytes][len1:4 bytes][data1][len2:4 bytes][data2]...
+// Format: [frame_count:4 bytes BE][len1:4 bytes BE][data1][len2:4 bytes BE][data2]...
+// All integers are in network byte order (big-endian) for cross-platform compatibility
 static SimpleRefHolder<BinaryNode> serializeFrames(const QoreListNode* args, size_t size, ExceptionSink* xsink) {
+    // Check for overflow - frame count must fit in uint32_t
+    if (size > UINT32_MAX) {
+        xsink->raiseException("ZSOCKET-SEND-ERROR",
+            "too many frames to serialize: " QLLD " exceeds maximum of %u",
+            (long long)size, UINT32_MAX);
+        return nullptr;
+    }
+
     std::vector<std::pair<const char*, size_t>> frames;
     frames.reserve(size);
 
@@ -101,22 +116,29 @@ static SimpleRefHolder<BinaryNode> serializeFrames(const QoreListNode* args, siz
                 (int)i + 1, (int)size, arg.getTypeName());
             return nullptr;
         }
+        // Check for overflow - frame length must fit in uint32_t
+        if (len > UINT32_MAX) {
+            xsink->raiseException("ZSOCKET-SEND-ERROR",
+                "frame %d too large: " QLLD " bytes exceeds maximum of %u",
+                (int)i + 1, (long long)len, UINT32_MAX);
+            return nullptr;
+        }
         frames.push_back({ptr, len});
     }
 
     // Create binary buffer
     SimpleRefHolder<BinaryNode> result(new BinaryNode());
 
-    // Write frame count
-    uint32_t frame_count = (uint32_t)size;
+    // Write frame count in network byte order (big-endian)
+    uint32_t frame_count = htonl((uint32_t)size);
     result->append(&frame_count, 4);
 
-    // Write each frame
+    // Write each frame with length in network byte order
     for (const auto& frame : frames) {
-        uint32_t len = (uint32_t)frame.second;
+        uint32_t len = htonl((uint32_t)frame.second);
         result->append(&len, 4);
-        if (len > 0) {
-            result->append(frame.first, len);
+        if (frame.second > 0) {
+            result->append(frame.first, frame.second);
         }
     }
 
@@ -124,13 +146,23 @@ static SimpleRefHolder<BinaryNode> serializeFrames(const QoreListNode* args, siz
 }
 
 // Deserialize a single binary blob into a ZMsg with multiple frames
-// Format: [frame_count:4 bytes][len1:4 bytes][data1][len2:4 bytes][data2]...
+// Format: [frame_count:4 bytes BE][len1:4 bytes BE][data1][len2:4 bytes BE][data2]...
+// All integers are in network byte order (big-endian) for cross-platform compatibility
 static zmsg_t* deserializeFrames(const void* data, size_t data_size, ExceptionSink* xsink) {
     if (data_size < 4) {
         // Single frame with raw data (not serialized)
         zmsg_t* msg = zmsg_new();
+        if (!msg) {
+            xsink->raiseException("ZSOCKET-MEMORY-ERROR", "failed to allocate zmsg_t");
+            return nullptr;
+        }
         if (data_size > 0) {
             zframe_t* frame = zframe_new(data, data_size);
+            if (!frame) {
+                zmsg_destroy(&msg);
+                xsink->raiseException("ZSOCKET-MEMORY-ERROR", "failed to allocate zframe_t");
+                return nullptr;
+            }
             zmsg_append(msg, &frame);
         }
         return msg;
@@ -139,20 +171,34 @@ static zmsg_t* deserializeFrames(const void* data, size_t data_size, ExceptionSi
     const uint8_t* ptr = (const uint8_t*)data;
     const uint8_t* end = ptr + data_size;
 
-    // Read frame count
-    uint32_t frame_count;
-    memcpy(&frame_count, ptr, 4);
+    // Read frame count in network byte order
+    uint32_t frame_count_raw;
+    memcpy(&frame_count_raw, ptr, 4);
+    uint32_t frame_count = ntohl(frame_count_raw);
     ptr += 4;
 
     // Sanity check - if frame_count is unreasonably large, treat as raw data
     if (frame_count > 10000 || (frame_count > 0 && ptr + 4 > end)) {
         zmsg_t* msg = zmsg_new();
+        if (!msg) {
+            xsink->raiseException("ZSOCKET-MEMORY-ERROR", "failed to allocate zmsg_t");
+            return nullptr;
+        }
         zframe_t* frame = zframe_new(data, data_size);
+        if (!frame) {
+            zmsg_destroy(&msg);
+            xsink->raiseException("ZSOCKET-MEMORY-ERROR", "failed to allocate zframe_t");
+            return nullptr;
+        }
         zmsg_append(msg, &frame);
         return msg;
     }
 
     zmsg_t* msg = zmsg_new();
+    if (!msg) {
+        xsink->raiseException("ZSOCKET-MEMORY-ERROR", "failed to allocate zmsg_t");
+        return nullptr;
+    }
 
     for (uint32_t i = 0; i < frame_count; ++i) {
         if (ptr + 4 > end) {
@@ -162,8 +208,9 @@ static zmsg_t* deserializeFrames(const void* data, size_t data_size, ExceptionSi
             return nullptr;
         }
 
-        uint32_t len;
-        memcpy(&len, ptr, 4);
+        uint32_t len_raw;
+        memcpy(&len_raw, ptr, 4);
+        uint32_t len = ntohl(len_raw);
         ptr += 4;
 
         if (ptr + len > end) {
@@ -175,6 +222,11 @@ static zmsg_t* deserializeFrames(const void* data, size_t data_size, ExceptionSi
         }
 
         zframe_t* frame = zframe_new(ptr, len);
+        if (!frame) {
+            zmsg_destroy(&msg);
+            xsink->raiseException("ZSOCKET-MEMORY-ERROR", "failed to allocate zframe_t for frame %d", (int)i);
+            return nullptr;
+        }
         zmsg_append(msg, &frame);
         ptr += len;
     }
@@ -2057,22 +2109,29 @@ nothing ZSocket::send(Qore::ZMQ::ZMsg[QoreZMsg] msg) {
             SimpleRefHolder<BinaryNode> serialized(new BinaryNode());
             // Note: don't use preallocate() as it adds to size, not just capacity
 
-            // Write frame count
-            uint32_t fc = (uint32_t)frame_count;
+            // Write frame count in network byte order (big-endian)
+            uint32_t fc = htonl((uint32_t)frame_count);
             serialized->append(&fc, 4);
 
-            // Write each frame
+            // Write each frame with length in network byte order
             for (zframe_t* frame = zmsg_first(**msg); frame; frame = zmsg_next(**msg)) {
-                uint32_t len = (uint32_t)zframe_size(frame);
+                uint32_t len = htonl((uint32_t)zframe_size(frame));
                 serialized->append(&len, 4);
-                if (len > 0) {
-                    serialized->append(zframe_data(frame), len);
+                size_t frame_len = zframe_size(frame);
+                if (frame_len > 0) {
+                    serialized->append(zframe_data(frame), frame_len);
                 }
             }
 
             // For SERVER sockets, set the routing_id on the outgoing message
             zmq_msg_t zmsg;
-            zmq_msg_init_size(&zmsg, serialized->size());
+            if (zmq_msg_init_size(&zmsg, serialized->size()) != 0) {
+                zmq_error(xsink, "ZSOCKET-SEND-ERROR",
+                    "error allocating message data in ZSocket::send(%s)", obj_msg->getClassName());
+                zmsg_destroy(msg->getPtr());
+                const_cast<QoreObject*>(obj_msg)->doDelete(xsink);
+                return QoreValue();
+            }
             memcpy(zmq_msg_data(&zmsg), serialized->getPtr(), serialized->size());
 
             if (sock_type == ZMQ_SERVER) {
@@ -2093,7 +2152,7 @@ nothing ZSocket::send(Qore::ZMQ::ZMsg[QoreZMsg] msg) {
                 }
                 break;
             }
-            // zmsg_send consumes the message, so we need to destroy it explicitly
+            // After sending the serialized zmq_msg_t, explicitly destroy the original zmsg_t and its Qore object
             zmsg_destroy(msg->getPtr());
             const_cast<QoreObject*>(obj_msg)->doDelete(xsink);
             return QoreValue();
@@ -2844,7 +2903,10 @@ nothing ZSocket::send(data[doc] val, ...) {
         // For SERVER sockets, we need to use zmq_msg_send with routing_id set
         if (sock_type == ZMQ_SERVER) {
             zmq_msg_t zmsg;
-            zmq_msg_init_size(&zmsg, serialized->size());
+            if (zmq_msg_init_size(&zmsg, serialized->size()) != 0) {
+                zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error allocating message data");
+                return QoreValue();
+            }
             memcpy(zmq_msg_data(&zmsg), serialized->getPtr(), serialized->size());
 
             // Set the routing_id for the message
@@ -2877,6 +2939,7 @@ nothing ZSocket::send(data[doc] val, ...) {
                         zmq_error(xsink, "ZSOCKET-TIMEOUT-ERROR", "timeout in ZSocket::send()");
                     else
                         zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error sending data");
+                    return QoreValue();
                 }
                 break;
             }

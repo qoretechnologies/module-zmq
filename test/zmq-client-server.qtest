@@ -248,9 +248,10 @@ class ZmqClientServerTest inherits QUnit::Test {
         client.send("", HelloWorld, "");
         ZMsg msg = server.recvMsg();
         assertEq(3, msg.size());
-        assertEq("", msg.popStr());
+        # popStr() returns NOTHING for zero-length frames (more efficient than empty string)
+        assertNothing(msg.popStr());
         assertEq(HelloWorld, msg.popStr());
-        assertEq("", msg.popStr());
+        assertNothing(msg.popStr());
 
         if (m_options.verbose > 2) {
             printf("Empty frame test passed\n");
@@ -500,15 +501,16 @@ class ZmqClientServerTest inherits QUnit::Test {
         client.send("", "", "");
         ZMsg msg = server.recvMsg();
         assertEq(3, msg.size());
-        assertEq("", msg.popStr());
-        assertEq("", msg.popStr());
-        assertEq("", msg.popStr());
+        # popStr() returns NOTHING for zero-length frames
+        assertNothing(msg.popStr());
+        assertNothing(msg.popStr());
+        assertNothing(msg.popStr());
 
         # Single empty frame
         client.send("");
         msg = server.recvMsg();
         assertEq(1, msg.size());
-        assertEq("", msg.popStr());
+        assertNothing(msg.popStr());
 
         if (m_options.verbose > 2) {
             printf("All empty frames test passed\n");

@@ -456,8 +456,8 @@ nothing ZMsg::push(Qore::ZMQ::ZFrame[QoreZFrame] frame) {
 
     size_t size = zframe_size(frame);
     if (!size) {
-        // Return an empty string for zero-length frames
-        return new QoreStringNode(qe);
+        // Return NOTHING for zero-length frames (more efficient than allocating empty string)
+        return QoreValue();
     }
     // zframe_strdup() does handle embedded nulls and returns nullptr on OOM
     char* p = zframe_strdup(frame);

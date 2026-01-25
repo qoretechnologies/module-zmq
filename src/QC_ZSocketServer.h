@@ -48,13 +48,15 @@ public:
     }
 
     // Get the routing_id from the last received message
+    // Uses acquire ordering to ensure proper synchronization with the store
     DLLLOCAL uint32_t getRoutingId() const {
-        return routing_id.load(std::memory_order_relaxed);
+        return routing_id.load(std::memory_order_acquire);
     }
 
     // Set the routing_id for the next send operation
+    // Uses release ordering to ensure proper synchronization with loads
     DLLLOCAL void setRoutingId(uint32_t id) {
-        routing_id.store(id, std::memory_order_relaxed);
+        routing_id.store(id, std::memory_order_release);
     }
 
 private:
