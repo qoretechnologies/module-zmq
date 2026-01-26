@@ -1878,6 +1878,12 @@ nothing ZSocket::monitor(int events, string[doc] format, ...) {
     if (*xsink)
         return QoreValue();
 
+    if (strncmp(str->c_str(), "inproc://", 9) != 0) {
+        xsink->raiseException("ZSOCKET-MONITOR-ERROR",
+            "ZSocket::monitor() supports only inproc:// endpoints");
+        return QoreValue();
+    }
+
     // zmq_socket_monitor() returns 0 = OK, -1 = error
     int rc = zmq_socket_monitor(**zsock, str->c_str(), events);
     if (rc < 0)
