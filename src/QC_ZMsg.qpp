@@ -5,7 +5,7 @@
 
     Qore Programming Language
 
-    Copyright (C) 2017 - 2018 Qore Technologies, s.r.o.
+    Copyright (C) 2017 - 2026 Qore Technologies, s.r.o.
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -479,7 +479,7 @@ nothing ZMsg::push(Qore::ZMQ::ZFrame[QoreZFrame] frame) {
 
     @throw ZMSG-THREAD-ERROR this exception is thrown when the object is used in a thread other than the one that created it
 */
-*binary ZMsg::popBin(*string encoding) {
+*binary ZMsg::popBin() {
     if (msg->check(xsink))
         return QoreValue();
 
@@ -552,6 +552,13 @@ int ZMsg::routingId() [flags=CONSTANT] {
     if (msg->check(xsink))
         return QoreValue();
 
+    // First check our custom routing_id (set for messages received on SERVER sockets via recvMsg/tryRecvMsg)
+    uint32_t custom_routing_id = msg->getRoutingId();
+    if (custom_routing_id != 0) {
+        return (int64)custom_routing_id;
+    }
+
+    // Fall back to czmq's zmsg routing_id
     return zmsg_routing_id(**msg);
 }
 

@@ -5,7 +5,7 @@
 
     Qore Programming Language
 
-    Copyright (C) 2017 - 2019 Qore Technologies, s.r.o.
+    Copyright (C) 2017 - 2026 Qore Technologies, s.r.o.
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -1878,6 +1878,12 @@ nothing ZSocket::monitor(int events, string[doc] format, ...) {
     if (*xsink)
         return QoreValue();
 
+    if (strncmp(str->c_str(), "inproc://", 9) != 0) {
+        xsink->raiseException("ZSOCKET-MONITOR-ERROR",
+            "ZSocket::monitor() supports only inproc:// endpoints");
+        return QoreValue();
+    }
+
     // zmq_socket_monitor() returns 0 = OK, -1 = error
     int rc = zmq_socket_monitor(**zsock, str->c_str(), events);
     if (rc < 0)
@@ -2375,8 +2381,10 @@ ZMsg ZSocket::recvMsg() {
         }
 
         // For SERVER sockets, capture the routing_id
+        uint32_t routing_id = 0;
         if (sock_type == ZMQ_SERVER) {
-            uint32_t routing_id = zmq_msg_routing_id(&zmsg);
+            routing_id = zmq_msg_routing_id(&zmsg);
+            // Also store in socket for backward compatibility with getRoutingId()
             static_cast<QoreServerZSock*>(zsock)->setRoutingId(routing_id);
         }
 
@@ -2389,7 +2397,8 @@ ZMsg ZSocket::recvMsg() {
         if (!msg)
             return QoreValue();
 
-        return new QoreObject(QC_ZMSG, getProgram(), new QoreZMsg(msg));
+        // Pass routing_id to ZMsg constructor for thread-safe access
+        return new QoreObject(QC_ZMSG, getProgram(), new QoreZMsg(msg, routing_id));
     }
 
     zmsg_t* msg;
@@ -2532,8 +2541,10 @@ if (!exists msg) {
         zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
 
         // For SERVER sockets, capture the routing_id
+        uint32_t routing_id = 0;
         if (sock_type == ZMQ_SERVER) {
-            uint32_t routing_id = zmq_msg_routing_id(&zmsg);
+            routing_id = zmq_msg_routing_id(&zmsg);
+            // Also store in socket for backward compatibility with getRoutingId()
             static_cast<QoreServerZSock*>(zsock)->setRoutingId(routing_id);
         }
 
@@ -2546,7 +2557,8 @@ if (!exists msg) {
         if (!msg)
             return QoreValue();
 
-        return new QoreObject(QC_ZMSG, getProgram(), new QoreZMsg(msg));
+        // Pass routing_id to ZMsg constructor for thread-safe access
+        return new QoreObject(QC_ZMSG, getProgram(), new QoreZMsg(msg, routing_id));
     }
 
     zmsg_t* msg;
@@ -2851,12 +2863,19 @@ nothing ZSocket::setIdentity(string id) {
     if (zsock->check(xsink))
         return QoreValue();
 
-    char* str = zsock_identity(**zsock);
-    if (!str)
+    char buf[256];
+    size_t len = sizeof(buf);
+    if (zsock->getSocketOption(ZMQ_IDENTITY, buf, &len)) {
+        zmq_error(xsink, "ZSOCKET-GETOPTION-ERROR", "error in zmq_getsockopt(ZMQ_IDENTITY)");
         return QoreValue();
+    }
+    if (!len) {
+        return QoreValue();
+    }
 
-    size_t len = strlen(str);
-    return new QoreStringNode(str, len, len + 1, QCS_UTF8);
+    SimpleRefHolder<QoreStringNode> rv(new QoreStringNode(QCS_UTF8));
+    rv->concat(buf, len);
+    return rv.release();
 }
 
 //! Sends one or more strings or binary data objects over the socket

@@ -22,7 +22,67 @@
     Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
+#include "zmq-module.h"
+
 #include "QC_ZSocketServer.h"
+
+#include <zmq.h>
+#include <vector>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#else
+#include <arpa/inet.h>
+#endif
+
+// Local helper to serialize frames for sendTo - processes args from offset to end
+// offset: starting index in args (e.g., 1 to skip routing_id)
+// end: end index (exclusive) in args
+static SimpleRefHolder<BinaryNode> serverSerializeFramesFromOffset(const QoreListNode* args, size_t offset, size_t end, ExceptionSink* xsink) {
+    size_t frame_count = end - offset;
+    if (frame_count > UINT32_MAX) {
+        xsink->raiseException("ZSOCKET-SENDTO-ERROR",
+            "too many frames to serialize: " QLLD " exceeds maximum of %u",
+            (long long)frame_count, UINT32_MAX);
+        return nullptr;
+    }
+
+    std::vector<std::pair<const char*, size_t>> frames;
+    frames.reserve(frame_count);
+
+    for (size_t i = offset; i < end; ++i) {
+        QoreValue arg = args->retrieveEntry(i);
+        const char* ptr;
+        size_t len;
+        if (q_get_data(arg, ptr, len)) {
+            xsink->raiseException("ZSOCKET-SENDTO-DATA-ERROR",
+                "expecting 'string' or 'binary' argument type in position %d/%d; got '%s' instead",
+                (int)(i - offset + 1), (int)frame_count, arg.getTypeName());
+            return nullptr;
+        }
+        if (len > UINT32_MAX) {
+            xsink->raiseException("ZSOCKET-SENDTO-ERROR",
+                "frame %d too large: " QLLD " bytes exceeds maximum of %u",
+                (int)(i - offset + 1), (long long)len, UINT32_MAX);
+            return nullptr;
+        }
+        frames.push_back({ptr, len});
+    }
+
+    SimpleRefHolder<BinaryNode> result(new BinaryNode());
+    uint32_t frame_count_be = htonl((uint32_t)frame_count);
+    result->append(&frame_count_be, 4);
+
+    for (const auto& frame : frames) {
+        uint32_t len = htonl((uint32_t)frame.second);
+        result->append(&len, 4);
+        if (frame.second > 0) {
+            result->append(frame.first, frame.second);
+        }
+    }
+
+    return result;
+}
 
 //! The ZSocketServer class implements a ZeroMQ \c SERVER socket
 /** @par Overview
@@ -154,4 +214,109 @@ nothing ZSocketServer::setRoutingId(int routing_id) {
         return QoreValue();
     }
     zsock->setRoutingId((uint32_t)routing_id);
+}
+
+//! Sends data to a specific client identified by routing_id (thread-safe)
+/** @par Example
+    @code{.py}
+# Receive a request
+ZMsg msg = server.recvMsg();
+int routing_id = server.getRoutingId();
+
+# Process and send response atomically to the correct client
+server.sendTo(routing_id, response_data);
+    @endcode
+
+    @param routing_id the routing_id of the client to send to
+    @param ... data frames to send (string or binary)
+
+    This method is thread-safe and atomically sets the routing_id on the message
+    before sending. Unlike the setRoutingId() + send() pattern, this method is safe
+    to use from multiple threads without external locking.
+
+    @throw ZSOCKET-SENDTO-ERROR if the routing_id is invalid (0)
+    @throw ZSOCKET-SEND-ERROR if there is an error sending the data
+
+    @see getRoutingId()
+
+    @since zmq 1.2.1
+*/
+nothing ZSocketServer::sendTo(int routing_id, ...) {
+    if (routing_id == 0) {
+        xsink->raiseException("ZSOCKET-SENDTO-ERROR", "routing_id cannot be 0");
+        return QoreValue();
+    }
+
+    // args contains all arguments: [routing_id, data1, data2, ...]
+    // We need to process args starting from index 1 (skip routing_id)
+    size_t total_args = args->size();
+    if (total_args <= 1) {
+        // No data frames - send empty message
+        zmq_msg_t zmsg;
+        if (zmq_msg_init(&zmsg) != 0) {
+            zmq_error(xsink, "ZSOCKET-SENDTO-ERROR", "error initializing message");
+            return QoreValue();
+        }
+        zmq_msg_set_routing_id(&zmsg, (uint32_t)routing_id);
+        int rc = zmq_msg_send(&zmsg, **zsock, 0);
+        if (rc < 0) {
+            zmq_msg_close(&zmsg);
+            zmq_error(xsink, "ZSOCKET-SENDTO-ERROR", "error sending empty message");
+        }
+        return QoreValue();
+    }
+
+    // Strip trailing NOTHING args
+    size_t size = total_args;
+    while (size > 1 && args->retrieveEntry(size - 1).isNothing()) {
+        --size;
+    }
+    size_t data_frames = size - 1;  // Exclude routing_id at index 0
+
+    if (data_frames == 0) {
+        // No data frames after stripping - send empty message
+        zmq_msg_t zmsg;
+        if (zmq_msg_init(&zmsg) != 0) {
+            zmq_error(xsink, "ZSOCKET-SENDTO-ERROR", "error initializing message");
+            return QoreValue();
+        }
+        zmq_msg_set_routing_id(&zmsg, (uint32_t)routing_id);
+        int rc = zmq_msg_send(&zmsg, **zsock, 0);
+        if (rc < 0) {
+            zmq_msg_close(&zmsg);
+            zmq_error(xsink, "ZSOCKET-SENDTO-ERROR", "error sending empty message");
+        }
+        return QoreValue();
+    }
+
+    // Serialize all data frames (starting from index 1) into a single frame
+    SimpleRefHolder<BinaryNode> serialized = serverSerializeFramesFromOffset(args, 1, size, xsink);
+    if (*xsink)
+        return QoreValue();
+
+    // Create message and set routing_id
+    zmq_msg_t zmsg;
+    if (zmq_msg_init_size(&zmsg, serialized->size()) != 0) {
+        zmq_error(xsink, "ZSOCKET-SENDTO-ERROR", "error allocating message data");
+        return QoreValue();
+    }
+    memcpy(zmq_msg_data(&zmsg), serialized->getPtr(), serialized->size());
+    zmq_msg_set_routing_id(&zmsg, (uint32_t)routing_id);
+
+    // Send with retry on EINTR
+    while (true) {
+        int rc = zmq_msg_send(&zmsg, **zsock, 0);
+        if (rc < 0) {
+            if (errno == EINTR)
+                continue;
+            zmq_msg_close(&zmsg);
+            if (errno == EAGAIN)
+                zmq_error(xsink, "ZSOCKET-TIMEOUT-ERROR", "timeout in ZSocketServer::sendTo()");
+            else
+                zmq_error(xsink, "ZSOCKET-SENDTO-ERROR", "error sending data");
+            return QoreValue();
+        }
+        break;
+    }
+    // Note: zmq_msg_send takes ownership of the message on success
 }

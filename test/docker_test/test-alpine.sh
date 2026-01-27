@@ -25,6 +25,32 @@ echo "export QORE_GID=1000" >> ${ENV_FILE}
 
 export MAKE_JOBS=4
 
+# ensure cmake is new enough for libzmq/czmq build
+ver_ge() {
+    local IFS=.
+    local i
+    local ver1=($1)
+    local ver2=($2)
+    for ((i = 0; i < ${#ver2[@]}; i++)); do
+        local v1=${ver1[i]:-0}
+        local v2=${ver2[i]}
+        if ((v1 > v2)); then
+            return 0
+        elif ((v1 < v2)); then
+            return 1
+        fi
+    done
+    return 0
+}
+
+cmake_version=""
+if command -v cmake >/dev/null 2>&1; then
+    cmake_version=$(cmake --version | awk 'NR==1{print $3}')
+fi
+if [ -z "${cmake_version}" ] || ! ver_ge "${cmake_version}" "3.5.0"; then
+    apk add --no-cache cmake
+fi
+
 # build module and install
 echo && echo "-- building module --"
 mkdir -p ${MODULE_SRC_DIR}/build

@@ -3,7 +3,7 @@
 /*
     Qore Programming Language
 
-    Copyright (C) 2017 - 2018 Qore Technologies, s.r.o.
+    Copyright (C) 2017 - 2026 Qore Technologies, s.r.o.
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -47,7 +47,7 @@ static int parsePort(const char* port_str) {
 
 // Helper function to check TCP/UDP network access
 // Returns true if access is allowed, false if denied (exception raised)
-static bool checkTcpUdpAccess(QoreSandboxManager* sm, const char* hostport, int proto,
+static bool checkTcpUdpAccess(QoreSandboxManager* sm, const char* hostport, int proto, bool is_bind,
                                const char* transport_name, ExceptionSink* xsink) {
     // Find the last colon (port separator)
     const char* port_sep = strrchr(hostport, ':');
@@ -67,14 +67,39 @@ static bool checkTcpUdpAccess(QoreSandboxManager* sm, const char* hostport, int 
     }
 
     // Handle bind-all addresses
-    if (host == "*" || host == "0.0.0.0" || host == "::") {
-        // For binding to all interfaces, use a generic check
+    if (host == "*" || host == "0.0.0.0") {
+        // For binding to all interfaces, use a generic IPv4 check
         struct sockaddr_in addr;
         memset(&addr, 0, sizeof(addr));
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = INADDR_ANY;
         addr.sin_port = htons(parsePort(port_str));
+        if (is_bind) {
+            return sm->network().checkBind((struct sockaddr*)&addr, sizeof(addr), proto, xsink);
+        }
         return sm->checkNetworkAccess((struct sockaddr*)&addr, sizeof(addr), proto, xsink);
+    }
+    if (host == "::") {
+        // For binding to all interfaces, use a generic IPv6 check
+        struct sockaddr_in6 addr6;
+        memset(&addr6, 0, sizeof(addr6));
+        addr6.sin6_family = AF_INET6;
+        addr6.sin6_addr = in6addr_any;
+        addr6.sin6_port = htons(parsePort(port_str));
+        if (is_bind) {
+            return sm->network().checkBind((struct sockaddr*)&addr6, sizeof(addr6), proto, xsink);
+        }
+        return sm->checkNetworkAccess((struct sockaddr*)&addr6, sizeof(addr6), proto, xsink);
+    }
+
+    // Enforce hostname policies before DNS resolution (connect only)
+    if (!is_bind) {
+        int port = parsePort(port_str);
+        if (!sm->network().checkHostname(host.c_str(), port, proto)) {
+            xsink->raiseException("NETWORK-ACCESS-DENIED",
+                "Connection to host '%s' denied by security policy", host.c_str());
+            return false;
+        }
     }
 
     // Resolve hostname
@@ -90,28 +115,47 @@ static bool checkTcpUdpAccess(QoreSandboxManager* sm, const char* hostport, int 
         return false;
     }
 
-    // Check access for the first resolved address
-    bool allowed = sm->checkNetworkAccess(res->ai_addr, res->ai_addrlen, proto, xsink);
+    // Check access for resolved addresses
+    bool allowed = false;
+    for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {
+        ExceptionSink tmp;
+        if (is_bind) {
+            if (sm->network().checkBind(ai->ai_addr, ai->ai_addrlen, proto, &tmp)) {
+                allowed = true;
+                break;
+            }
+        } else {
+            if (sm->checkNetworkAccess(ai->ai_addr, ai->ai_addrlen, proto, &tmp)) {
+                allowed = true;
+                break;
+            }
+        }
+    }
     freeaddrinfo(res);
+    if (!allowed) {
+        xsink->raiseException("NETWORK-ACCESS-DENIED",
+            "%s access denied by security policy", is_bind ? "bind" : "connect");
+    }
     return allowed;
 }
 
 // Helper function to check network access for ZMQ endpoints
 // Returns true if access is allowed, false if denied (exception raised)
-static bool checkZmqNetworkAccess(const char* endpoint, ExceptionSink* xsink) {
+static bool checkZmqNetworkAccess(const char* endpoint, bool is_bind, ExceptionSink* xsink) {
     QoreSandboxManager* sm = runtime_get_sandbox_manager();
     if (!sm) {
         return true;  // No sandbox manager, allow all access
     }
 
     // Parse endpoint to determine transport type
-    // ZMQ endpoints: tcp://host:port, udp://host:port, ipc:///path, inproc://name,
+    // ZMQ endpoints: tcp://host:port, ipc:///path, inproc://name,
     //                pgm://interface;multicast:port, epgm://interface;multicast:port
+    // Note: udp:// is only supported by RADIO/DISH (draft) sockets; regular sockets reject it.
     if (strncasecmp(endpoint, "tcp://", 6) == 0) {
-        return checkTcpUdpAccess(sm, endpoint + 6, QSEC_NET_TCP, "TCP", xsink);
+        return checkTcpUdpAccess(sm, endpoint + 6, QSEC_NET_TCP, is_bind, "TCP", xsink);
     }
     else if (strncasecmp(endpoint, "udp://", 6) == 0) {
-        return checkTcpUdpAccess(sm, endpoint + 6, QSEC_NET_UDP, "UDP", xsink);
+        return checkTcpUdpAccess(sm, endpoint + 6, QSEC_NET_UDP, is_bind, "UDP", xsink);
     }
     else if (strncasecmp(endpoint, "ipc://", 6) == 0) {
         // IPC (Unix domain socket) - check as Unix socket
@@ -120,6 +164,9 @@ static bool checkZmqNetworkAccess(const char* endpoint, ExceptionSink* xsink) {
         memset(&addr, 0, sizeof(addr));
         addr.sun_family = AF_UNIX;
         strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+        if (is_bind) {
+            return sm->network().checkBind((struct sockaddr*)&addr, sizeof(addr), QSEC_NET_UNIX, xsink);
+        }
         return sm->checkNetworkAccess((struct sockaddr*)&addr, sizeof(addr), QSEC_NET_UNIX, xsink);
     }
     else if (strncasecmp(endpoint, "inproc://", 9) == 0) {
@@ -142,16 +189,19 @@ static bool checkZmqNetworkAccess(const char* endpoint, ExceptionSink* xsink) {
             multicast_start = addr_start;
         }
 
-        return checkTcpUdpAccess(sm, multicast_start, QSEC_NET_UDP, "PGM", xsink);
+        return checkTcpUdpAccess(sm, multicast_start, QSEC_NET_UDP, is_bind, "PGM", xsink);
     }
     else if (strncasecmp(endpoint, "vmci://", 7) == 0) {
-        // VMware virtual socket - no standard network check, allow by default
-        // VMCI uses CID:port format, not IP addresses
-        return true;
+        // VMware virtual socket - no standard network check; deny in sandboxed mode
+        xsink->raiseException("NETWORK-ACCESS-DENIED",
+            "vmci:// transport denied by security policy");
+        return false;
     }
 
-    // Unknown transport - allow by default (ZMQ may support new transports)
-    return true;
+    // Unknown transport - deny by default in sandboxed mode (ZMQ may support new transports)
+    xsink->raiseException("NETWORK-ACCESS-DENIED",
+        "Unknown transport denied by security policy");
+    return false;
 }
 
 static std::regex url_port_regex("^tcp://.*:(\\d+|\\*)$", std::regex_constants::ECMAScript | std::regex_constants::icase | std::regex_constants::optimize);
@@ -257,7 +307,7 @@ int QoreZSock::bind(ExceptionSink *xsink, const char* endpoint, const char* err)
         return -1;
 
     // Check network access for sandbox
-    if (!checkZmqNetworkAccess(endpoint, xsink))
+    if (!checkZmqNetworkAccess(endpoint, true, xsink))
         return -1;
 
     std::cmatch match;
@@ -296,7 +346,7 @@ int QoreZSock::connect(ExceptionSink *xsink, const char* endpoint, const char* e
         return -1;
 
     // Check network access for sandbox
-    if (!checkZmqNetworkAccess(endpoint, xsink))
+    if (!checkZmqNetworkAccess(endpoint, false, xsink))
         return -1;
 
     // NOTE: zmq_connect() is not affected by EINTR
