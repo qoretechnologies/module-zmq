@@ -1,4 +1,4 @@
-/*  Stub zproc.h for macports czmq without draft API headers installed */
+/*  Stub zproc.h for MacPorts czmq without draft API headers installed */
 
 #ifndef __ZPROC_H_INCLUDED__
 #define __ZPROC_H_INCLUDED__

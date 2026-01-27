@@ -1,4 +1,4 @@
-/*  Stub ztrie.h for macports czmq without draft API headers installed */
+/*  Stub ztrie.h for MacPorts czmq without draft API headers installed */
 
 #ifndef __ZTRIE_H_INCLUDED__
 #define __ZTRIE_H_INCLUDED__

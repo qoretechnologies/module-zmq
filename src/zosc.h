@@ -1,4 +1,4 @@
-/*  Stub zosc.h for macports czmq without draft API headers installed */
+/*  Stub zosc.h for MacPorts czmq without draft API headers installed */
 
 #ifndef __ZOSC_H_INCLUDED__
 #define __ZOSC_H_INCLUDED__

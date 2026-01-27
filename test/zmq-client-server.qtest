@@ -36,6 +36,10 @@ class ZmqClientServerTest inherits QUnit::Test {
         addTestCase("multiple clients", \multipleClientsTest());
         addTestCase("concurrent sends", \concurrentSendsTest());
         addTestCase("routing_id round trip", \routingIdRoundTripTest());
+        addTestCase("sendTo basic", \sendToBasicTest());
+        addTestCase("sendTo empty", \sendToEmptyTest());
+        addTestCase("sendTo multi-frame", \sendToMultiFrameTest());
+        addTestCase("sendTo thread safety", \sendToThreadSafetyTest());
         addTestCase("large message serialization", \largeMessageTest());
         addTestCase("empty frame handling", \emptyFrameTest());
         addTestCase("binary data with nulls", \binaryNullsTest());
@@ -46,6 +50,7 @@ class ZmqClientServerTest inherits QUnit::Test {
         addTestCase("thread safety", \threadSafetyTest());
         addTestCase("socket type check", \socketTypeTest());
         addTestCase("negative - invalid routing_id", \negativeRoutingIdTest());
+        addTestCase("negative - sendTo invalid routing_id", \negativeSendToRoutingIdTest());
         addTestCase("negative - getRoutingId before recv", \negativeGetRoutingIdBeforeRecvTest());
         addTestCase("negative - send without setRoutingId", \negativeSendWithoutRoutingIdTest());
         addTestCase("negative - stale routing_id", \negativeStaleRoutingIdTest());
@@ -212,6 +217,103 @@ class ZmqClientServerTest inherits QUnit::Test {
 
         if (m_options.verbose > 2) {
             printf("Routing ID round-trip test passed\n");
+        }
+    }
+
+    sendToBasicTest() {
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        client.send("ping");
+        ZMsg msg = server.recvMsg();
+        int rid = msg.routingId();
+        assertTrue(rid > 0);
+        assertEq(rid, server.getRoutingId());
+
+        server.sendTo(rid, "pong");
+        ZMsg reply = client.recvMsg();
+        assertEq(1, reply.size());
+        assertEq("pong", reply.popStr());
+
+        if (m_options.verbose > 2) {
+            printf("sendTo basic test passed\n");
+        }
+    }
+
+    sendToEmptyTest() {
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        client.send("ping");
+        ZMsg msg = server.recvMsg();
+        int rid = msg.routingId();
+
+        server.sendTo(rid);
+        ZMsg reply = client.recvMsg();
+        assertEq(0, reply.size());
+
+        if (m_options.verbose > 2) {
+            printf("sendTo empty test passed\n");
+        }
+    }
+
+    sendToMultiFrameTest() {
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        client.send("ping");
+        ZMsg msg = server.recvMsg();
+        int rid = msg.routingId();
+
+        server.sendTo(rid, "a", "b", "c");
+        ZMsg reply = client.recvMsg();
+        assertEq(3, reply.size());
+        assertEq("a", reply.popStr());
+        assertEq("b", reply.popStr());
+        assertEq("c", reply.popStr());
+
+        if (m_options.verbose > 2) {
+            printf("sendTo multi-frame test passed\n");
+        }
+    }
+
+    sendToThreadSafetyTest() {
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+
+        client.send("ping");
+        ZMsg msg = server.recvMsg();
+        int rid = msg.routingId();
+
+        int num_threads = 6;
+        int msgs_per_thread = 4;
+        Counter done(num_threads);
+
+        for (int t = 0; t < num_threads; ++t) {
+            background sub (int tid) {
+                on_exit done.dec();
+                for (int i = 0; i < msgs_per_thread; ++i) {
+                    server.sendTo(rid, "thread " + tid + " msg " + i);
+                }
+            }(t);
+        }
+
+        int total_expected = num_threads * msgs_per_thread;
+        int received = 0;
+        client.setRecvTimeout(5s);
+        while (received < total_expected) {
+            ZMsg reply = client.recvMsg();
+            assertEq(1, reply.size());
+            string content = reply.popStr();
+            assertTrue(content.find("thread") >= 0);
+            ++received;
+        }
+
+        done.waitForZero();
+        assertEq(total_expected, received);
+
+        if (m_options.verbose > 2) {
+            printf("sendTo thread safety test passed\n");
         }
     }
 
@@ -422,6 +524,15 @@ class ZmqClientServerTest inherits QUnit::Test {
 
         if (m_options.verbose > 2) {
             printf("Negative routing_id test passed\n");
+        }
+    }
+
+    negativeSendToRoutingIdTest() {
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        assertThrows("ZSOCKET-SENDTO-ERROR", \server.sendTo(), 0);
+
+        if (m_options.verbose > 2) {
+            printf("Negative sendTo routing_id test passed\n");
         }
     }
 

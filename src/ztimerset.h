@@ -1,4 +1,4 @@
-/*  Stub ztimerset.h for macports czmq without draft API headers installed */
+/*  Stub ztimerset.h for MacPorts czmq without draft API headers installed */
 
 #ifndef __ZTIMERSET_H_INCLUDED__
 #define __ZTIMERSET_H_INCLUDED__

@@ -1,4 +1,4 @@
-/*  Stub zargs.h for macports czmq without draft API headers installed
+/*  Stub zargs.h for MacPorts czmq without draft API headers installed
     The zargs_t type is already forward-declared in czmq_library.h
 */
 
