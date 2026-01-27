@@ -205,6 +205,8 @@ else()
         GIT_REPOSITORY https://github.com/zeromq/libzmq.git
         GIT_TAG        v4.3.5
         GIT_SHALLOW    TRUE
+        PATCH_COMMAND  ${CMAKE_COMMAND} -Dlibzmq_src_dir=<SOURCE_DIR>
+                       -P ${CMAKE_SOURCE_DIR}/cmake/patch-libzmq-cmake-min.cmake
     )
 
     # Configure libzmq build options
