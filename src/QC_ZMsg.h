@@ -39,8 +39,22 @@ public:
     DLLLOCAL QoreZMsg(zmsg_t* msg) : msg(msg) {
     }
 
+    // creates msg with routing_id (for SERVER socket receives)
+    DLLLOCAL QoreZMsg(zmsg_t* msg, uint32_t routing_id) : msg(msg), routing_id(routing_id) {
+    }
+
+    //! Gets the routing_id (for messages received on SERVER sockets)
+    DLLLOCAL uint32_t getRoutingId() const {
+        return routing_id;
+    }
+
+    //! Sets the routing_id
+    DLLLOCAL void setRoutingId(uint32_t id) {
+        routing_id = id;
+    }
+
     // copies the msg
-    DLLLOCAL QoreZMsg(const QoreZMsg& old) : msg(zmsg_dup(old.msg)) {
+    DLLLOCAL QoreZMsg(const QoreZMsg& old) : msg(zmsg_dup(old.msg)), routing_id(old.routing_id) {
     }
 
     DLLLOCAL zmsg_t* operator*() {
@@ -71,6 +85,7 @@ protected:
 
 private:
     zmsg_t* msg = nullptr;
+    uint32_t routing_id = 0;  // For messages received on SERVER sockets
 };
 
 DLLLOCAL extern QoreClass* QC_ZMSG;

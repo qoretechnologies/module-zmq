@@ -2381,8 +2381,10 @@ ZMsg ZSocket::recvMsg() {
         }
 
         // For SERVER sockets, capture the routing_id
+        uint32_t routing_id = 0;
         if (sock_type == ZMQ_SERVER) {
-            uint32_t routing_id = zmq_msg_routing_id(&zmsg);
+            routing_id = zmq_msg_routing_id(&zmsg);
+            // Also store in socket for backward compatibility with getRoutingId()
             static_cast<QoreServerZSock*>(zsock)->setRoutingId(routing_id);
         }
 
@@ -2395,7 +2397,8 @@ ZMsg ZSocket::recvMsg() {
         if (!msg)
             return QoreValue();
 
-        return new QoreObject(QC_ZMSG, getProgram(), new QoreZMsg(msg));
+        // Pass routing_id to ZMsg constructor for thread-safe access
+        return new QoreObject(QC_ZMSG, getProgram(), new QoreZMsg(msg, routing_id));
     }
 
     zmsg_t* msg;
@@ -2538,8 +2541,10 @@ if (!exists msg) {
         zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
 
         // For SERVER sockets, capture the routing_id
+        uint32_t routing_id = 0;
         if (sock_type == ZMQ_SERVER) {
-            uint32_t routing_id = zmq_msg_routing_id(&zmsg);
+            routing_id = zmq_msg_routing_id(&zmsg);
+            // Also store in socket for backward compatibility with getRoutingId()
             static_cast<QoreServerZSock*>(zsock)->setRoutingId(routing_id);
         }
 
@@ -2552,7 +2557,8 @@ if (!exists msg) {
         if (!msg)
             return QoreValue();
 
-        return new QoreObject(QC_ZMSG, getProgram(), new QoreZMsg(msg));
+        // Pass routing_id to ZMsg constructor for thread-safe access
+        return new QoreObject(QC_ZMSG, getProgram(), new QoreZMsg(msg, routing_id));
     }
 
     zmsg_t* msg;
