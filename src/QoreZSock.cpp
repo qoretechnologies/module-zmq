@@ -3,7 +3,7 @@
 /*
     Qore Programming Language
 
-    Copyright (C) 2017 - 2018 Qore Technologies, s.r.o.
+    Copyright (C) 2017 - 2026 Qore Technologies, s.r.o.
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -148,8 +148,9 @@ static bool checkZmqNetworkAccess(const char* endpoint, bool is_bind, ExceptionS
     }
 
     // Parse endpoint to determine transport type
-    // ZMQ endpoints: tcp://host:port, udp://host:port, ipc:///path, inproc://name,
+    // ZMQ endpoints: tcp://host:port, ipc:///path, inproc://name,
     //                pgm://interface;multicast:port, epgm://interface;multicast:port
+    // Note: udp:// is only supported by RADIO/DISH (draft) sockets; regular sockets reject it.
     if (strncasecmp(endpoint, "tcp://", 6) == 0) {
         return checkTcpUdpAccess(sm, endpoint + 6, QSEC_NET_TCP, is_bind, "TCP", xsink);
     }

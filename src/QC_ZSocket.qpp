@@ -5,7 +5,7 @@
 
     Qore Programming Language
 
-    Copyright (C) 2017 - 2019 Qore Technologies, s.r.o.
+    Copyright (C) 2017 - 2026 Qore Technologies, s.r.o.
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -2863,12 +2863,19 @@ nothing ZSocket::setIdentity(string id) {
     if (zsock->check(xsink))
         return QoreValue();
 
-    char* str = zsock_identity(**zsock);
-    if (!str)
+    char buf[256];
+    size_t len = sizeof(buf);
+    if (zsock->getSocketOption(ZMQ_IDENTITY, buf, &len)) {
+        zmq_error(xsink, "ZSOCKET-GETOPTION-ERROR", "error in zmq_getsockopt(ZMQ_IDENTITY)");
         return QoreValue();
+    }
+    if (!len) {
+        return QoreValue();
+    }
 
-    size_t len = strlen(str);
-    return new QoreStringNode(str, len, len + 1, QCS_UTF8);
+    SimpleRefHolder<QoreStringNode> rv(new QoreStringNode(QCS_UTF8));
+    rv->concat(buf, len);
+    return rv.release();
 }
 
 //! Sends one or more strings or binary data objects over the socket
