@@ -14,7 +14,16 @@ else()
     message(FATAL_ERROR "ZMQ includes not found (set ZMQ_DIR to the ZMQ installation location and try again)")
 endif(ZMQ_INCLUDE_DIR)
 
+# Prefer shared libraries to avoid static transitive dependency issues
+set(_zmq_saved_suffixes ${CMAKE_FIND_LIBRARY_SUFFIXES})
+set(CMAKE_FIND_LIBRARY_SUFFIXES ${CMAKE_SHARED_LIBRARY_SUFFIX})
 find_library(ZMQ_LIBRARY NAMES zmq HINTS $ENV{ZMQ_DIR}/lib)
+if(NOT ZMQ_LIBRARY)
+    set(CMAKE_FIND_LIBRARY_SUFFIXES ${_zmq_saved_suffixes})
+    find_library(ZMQ_LIBRARY NAMES zmq HINTS $ENV{ZMQ_DIR}/lib)
+endif()
+set(CMAKE_FIND_LIBRARY_SUFFIXES ${_zmq_saved_suffixes})
+unset(_zmq_saved_suffixes)
 
 set(ZMQ_INCLUDE_DIRS ${ZMQ_INCLUDE_DIR})
 set(ZMQ_LIBRARIES ${ZMQ_LIBRARY})
@@ -51,6 +60,25 @@ set(CZMQ_LIBRARIES ${CZMQ_LIBRARY})
 set(CMAKE_REQUIRED_INCLUDES ${CZMQ_INCLUDE_DIR} ${ZMQ_INCLUDE_DIRS})
 set(CMAKE_REQUIRED_LIBRARIES ${CZMQ_LIBRARY} ${ZMQ_LIBRARIES})
 set(CMAKE_REQUIRED_DEFINITIONS -DZMQ_BUILD_DRAFT_API=1)
+
+# If ZMQ is a static library, we need its transitive dependencies for link checks
+if(ZMQ_LIBRARY MATCHES "\\.a$")
+    find_package(PkgConfig QUIET)
+    if(PKG_CONFIG_FOUND)
+        execute_process(
+            COMMAND ${PKG_CONFIG_EXECUTABLE} --libs --static libzmq
+            OUTPUT_VARIABLE ZMQ_STATIC_LDFLAGS
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE ZMQ_PKGCONFIG_RESULT
+        )
+        if(ZMQ_PKGCONFIG_RESULT EQUAL 0)
+            message(STATUS "ZMQ is static, adding transitive dependencies: ${ZMQ_STATIC_LDFLAGS}")
+            separate_arguments(ZMQ_STATIC_DEPS UNIX_COMMAND "${ZMQ_STATIC_LDFLAGS}")
+            list(APPEND CMAKE_REQUIRED_LIBRARIES ${ZMQ_STATIC_DEPS})
+            list(APPEND ZMQ_LIBRARIES ${ZMQ_STATIC_DEPS})
+        endif()
+    endif()
+endif()
 
 # Use CheckCXXSourceCompiles instead of check_function_exists for more reliable detection
 # check_function_exists doesn't work well with C++ name mangling and symbol visibility
