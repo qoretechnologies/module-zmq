@@ -21,8 +21,8 @@
 
 #include "zmq-module.h"
 
-static QoreStringNode* zmq_module_init();
-static void zmq_module_ns_init(QoreNamespace* rns, QoreNamespace* qns);
+static void zmq_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink);
+static void zmq_module_ns_init(QoreNamespace* rns, QoreNamespace* qns, ExceptionSink& xsink);
 static void zmq_module_delete();
 
 DLLLOCAL void preinitZSocketClass();
@@ -58,26 +58,27 @@ DLLLOCAL QoreClass* initZSocketDishClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initZFrameClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initZMsgClass(QoreNamespace& ns);
 
-// qore module symbols
-DLLEXPORT char qore_module_name[] = "zmq";
-DLLEXPORT char qore_module_version[] = PACKAGE_VERSION;
-DLLEXPORT char qore_module_description[] = "zmq module";
-DLLEXPORT char qore_module_author[] = "David Nichols";
-DLLEXPORT char qore_module_url[] = "http://qore.org";
-DLLEXPORT int qore_module_api_major = QORE_MODULE_API_MAJOR;
-DLLEXPORT int qore_module_api_minor = QORE_MODULE_API_MINOR;
-DLLEXPORT qore_module_init_t qore_module_init = zmq_module_init;
-DLLEXPORT qore_module_ns_init_t qore_module_ns_init = zmq_module_ns_init;
-DLLEXPORT qore_module_delete_t qore_module_delete = zmq_module_delete;
-DLLEXPORT qore_license_t qore_module_license = QL_MIT;
-DLLEXPORT char qore_module_license_str[] = "MIT";
+extern "C" DLLEXPORT void zmq_qore_module_desc(QoreModuleInfo& mod_info) {
+    mod_info.name = "zmq";
+    mod_info.version = PACKAGE_VERSION;
+    mod_info.desc = "zmq module";
+    mod_info.author = "David Nichols";
+    mod_info.url = "http://qore.org";
+    mod_info.api_major = QORE_MODULE_API_MAJOR;
+    mod_info.api_minor = QORE_MODULE_API_MINOR;
+    mod_info.init = zmq_module_init;
+    mod_info.ns_init = zmq_module_ns_init;
+    mod_info.del = zmq_module_delete;
+    mod_info.license = QL_MIT;
+    mod_info.license_str = "MIT";
+}
 
 DLLLOCAL void init_zmq_functions(QoreNamespace& ns);
 DLLLOCAL void init_zmq_constants(QoreNamespace& ns);
 
 QoreNamespace zmqns("Qore::ZMQ");
 
-static QoreStringNode* zmq_module_init() {
+static void zmq_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink) {
     zmqns.addSystemClass(initZContextClass(zmqns));
 
     preinitZSocketClass();
@@ -112,10 +113,9 @@ static QoreStringNode* zmq_module_init() {
     init_zmq_constants(zmqns);
     init_zmq_functions(zmqns);
 
-    return 0;
 }
 
-static void zmq_module_ns_init(QoreNamespace* rns, QoreNamespace* qns) {
+static void zmq_module_ns_init(QoreNamespace* rns, QoreNamespace* qns, ExceptionSink& xsink) {
     qns->addNamespace(zmqns.copy());
 }
 
