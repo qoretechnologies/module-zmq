@@ -2317,8 +2317,8 @@ ZMsg ZSocket::recvMsg() {
         zmq_msg_init(&zmsg);
 
         // Use polling with interrupt checks if sandbox manager exists
-        QoreSandboxManager* sm = runtime_get_sandbox_manager();
-        if (sm) {
+        QoreSandboxManagerHelper smh;
+        if (smh) {
             const int poll_interval_ms = 500;
 
             // Save current timeout
@@ -2340,7 +2340,7 @@ ZMsg ZSocket::recvMsg() {
 
             while (true) {
                 // Check for interrupt
-                if (sm->isInterruptRequested()) {
+                if (smh->isInterruptRequested()) {
                     zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
                     zmq_msg_close(&zmsg);
                     xsink->raiseException("PROGRAM-INTERRUPTED", "program execution was interrupted while waiting in recvMsg()");
@@ -2404,8 +2404,8 @@ ZMsg ZSocket::recvMsg() {
     zmsg_t* msg;
 
     // Use polling with interrupt checks if sandbox manager exists
-    QoreSandboxManager* sm = runtime_get_sandbox_manager();
-    if (sm) {
+    QoreSandboxManagerHelper smh;
+    if (smh) {
         const int poll_interval_ms = 500;  // 500ms polling interval for interrupt checks
 
         // Save current timeout
@@ -2425,7 +2425,7 @@ ZMsg ZSocket::recvMsg() {
 
         while (true) {
             // Check for interrupt
-            if (sm->isInterruptRequested()) {
+            if (smh->isInterruptRequested()) {
                 // Restore original timeout before raising exception
                 zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
                 xsink->raiseException("PROGRAM-INTERRUPTED", "program execution was interrupted while waiting in recvMsg()");

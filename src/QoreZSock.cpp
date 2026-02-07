@@ -142,10 +142,11 @@ static bool checkTcpUdpAccess(QoreSandboxManager* sm, const char* hostport, int 
 // Helper function to check network access for ZMQ endpoints
 // Returns true if access is allowed, false if denied (exception raised)
 static bool checkZmqNetworkAccess(const char* endpoint, bool is_bind, ExceptionSink* xsink) {
-    QoreSandboxManager* sm = runtime_get_sandbox_manager();
-    if (!sm) {
+    QoreSandboxManagerHelper smh;
+    if (!smh) {
         return true;  // No sandbox manager, allow all access
     }
+    QoreSandboxManager* sm = smh.get();
 
     // Parse endpoint to determine transport type
     // ZMQ endpoints: tcp://host:port, ipc:///path, inproc://name,
@@ -215,15 +216,15 @@ int QoreZSock::poll(short events, int timeout_ms, const char* meth, ExceptionSin
     int rc;
 
     // Use polling with interrupt checks if sandbox manager exists
-    QoreSandboxManager* sm = runtime_get_sandbox_manager();
-    if (sm) {
+    QoreSandboxManagerHelper smh;
+    if (smh) {
         const int poll_interval_ms = 500;  // 500ms polling interval for interrupt checks
         int64_t remaining_ms = timeout_ms;
         bool infinite = (timeout_ms < 0);
 
         while (true) {
             // Check for interrupt
-            if (sm->isInterruptRequested()) {
+            if (smh->isInterruptRequested()) {
                 xsink->raiseException("PROGRAM-INTERRUPTED", "program execution was interrupted while waiting in %s()", meth);
                 return -1;
             }
