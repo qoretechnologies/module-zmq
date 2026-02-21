@@ -69,8 +69,7 @@ ZSocketPair sock(ctx, "tcp://127.0.0.1:8001");
     @throw ZSOCKET-CONNECT-ERROR this exception is thrown if there is any error connecting the socket
  */
 ZSocketPair::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx, string endpoint) {
-   ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-   self->setPrivate(CID_ZSOCKETPAIR, new QorePairZSock(*ctx, endpoint->c_str(), xsink));
+   self->setPrivate(CID_ZSOCKETPAIR, new QorePairZSock(**ctx, endpoint->c_str(), xsink));
 }
 
 //! constructs an unconnected \c PAIR zsocket
@@ -84,6 +83,5 @@ ZSocketPair sock(ctx);
     @throw ZSOCKET-CONSTRUCTOR-ERROR this exception is thrown if there is any error creating the socket
  */
 ZSocketPair::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx) {
-   ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-   self->setPrivate(CID_ZSOCKETPAIR, new QorePairZSock(*ctx, nullptr, xsink));
+   self->setPrivate(CID_ZSOCKETPAIR, new QorePairZSock(**ctx, nullptr, xsink));
 }

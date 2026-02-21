@@ -138,8 +138,7 @@ ZSocketServer server(ctx, "tcp://127.0.0.1:8001");
     @note This socket type is thread-safe and can be accessed from multiple threads
  */
 ZSocketServer::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx, string endpoint) {
-    ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-    self->setPrivate(CID_ZSOCKETSERVER, new QoreServerZSock(*ctx, endpoint->c_str(), xsink));
+    self->setPrivate(CID_ZSOCKETSERVER, new QoreServerZSock(**ctx, endpoint->c_str(), xsink));
 }
 
 //! constructs an unbound \c SERVER zsocket
@@ -157,8 +156,7 @@ int port = server.bind("tcp://127.0.0.1:*");
     @note This socket type is thread-safe and can be accessed from multiple threads
  */
 ZSocketServer::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx) {
-    ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-    self->setPrivate(CID_ZSOCKETSERVER, new QoreServerZSock(*ctx, nullptr, xsink));
+    self->setPrivate(CID_ZSOCKETSERVER, new QoreServerZSock(**ctx, nullptr, xsink));
 }
 
 //! Gets the routing_id from the last received message

@@ -74,8 +74,7 @@ ZSocketDealer sock(ctx, "my-identity", "tcp://127.0.0.1:8001");
     @note It is recommended to use an identity with \c DEALER sockets
  */
 ZSocketDealer::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx, *string identity, string endpoint) {
-    ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-    SimpleRefHolder<QoreDealerZSock> dealer(new QoreDealerZSock(*ctx, identity, endpoint->c_str(), xsink));
+    SimpleRefHolder<QoreDealerZSock> dealer(new QoreDealerZSock(**ctx, identity, endpoint->c_str(), xsink));
     if (!*xsink)
         self->setPrivate(CID_ZSOCKETDEALER, dealer.release());
 }
@@ -97,6 +96,5 @@ dealer.connect("tcp://127.0.0.1:" + port);
     @note It is recommended to use an identity with \c DEALER sockets
  */
 ZSocketDealer::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx) {
-    ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-    self->setPrivate(CID_ZSOCKETDEALER, new QoreDealerZSock(*ctx, nullptr, nullptr, xsink));
+    self->setPrivate(CID_ZSOCKETDEALER, new QoreDealerZSock(**ctx, nullptr, nullptr, xsink));
 }

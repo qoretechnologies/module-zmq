@@ -60,8 +60,7 @@ ZSocketSub sock(ctx, "tcp://127.0.0.1:8001", str);
     @throw ZSOCKET-CONNECT-ERROR this exception is thrown if there is any error connecting the socket
  */
 ZSocketSub::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx, string endpoint, string subscribe) {
-    ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-    self->setPrivate(CID_ZSOCKETSUB, new QoreSubZSock(*ctx, endpoint->c_str(), subscribe, xsink));
+    self->setPrivate(CID_ZSOCKETSUB, new QoreSubZSock(**ctx, endpoint->c_str(), subscribe, xsink));
 }
 
 //! constructs an unconnected \c SUB zsocket
@@ -77,8 +76,7 @@ ZSocketSub sock(ctx);
     @note Newly created ZSocketSub objects filter out all incoming messages, therefore you should call subscribe() to establish an initial message filter
  */
 ZSocketSub::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx) {
-    ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-    self->setPrivate(CID_ZSOCKETSUB, new QoreSubZSock(*ctx, nullptr, nullptr, xsink));
+    self->setPrivate(CID_ZSOCKETSUB, new QoreSubZSock(**ctx, nullptr, nullptr, xsink));
 }
 
 //! Adds a subscription to the socket

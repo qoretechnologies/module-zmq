@@ -247,8 +247,6 @@ msg.add(frame);
     @throw ZMSG-THREAD-ERROR this exception is thrown when the object is used in a thread other than the one that created it
 */
 nothing ZMsg::add(Qore::ZMQ::ZFrame[QoreZFrame] frame) {
-    ReferenceHolder<QoreZFrame> holder(frame, xsink);
-
     if (msg->check(xsink))
         return QoreValue();
 
@@ -311,8 +309,6 @@ msg.add(msg);
     @throw ZMSG-THREAD-ERROR this exception is thrown when the object is used in a thread other than the one that created it
  */
 nothing ZMsg::add(Qore::ZMQ::ZMsg[QoreZMsg] submsg) {
-    ReferenceHolder<QoreZMsg> holder(submsg, xsink);
-
     if (msg->check(xsink) || submsg->check(xsink))
         return QoreValue();
 
@@ -375,8 +371,6 @@ msg.push(frame);
     @throw ZMSG-THREAD-ERROR this exception is thrown when the object is used in a thread other than the one that created it
 */
 nothing ZMsg::push(Qore::ZMQ::ZFrame[QoreZFrame] frame) {
-    ReferenceHolder<QoreZFrame> holder(frame, xsink);
-
     if (msg->check(xsink))
         return QoreValue();
 
@@ -609,12 +603,10 @@ bool b = msg.more();
     @throw ZMSG-THREAD-ERROR this exception is thrown when the object is used in a thread other than the one that created it
 */
 bool ZMsg::eq(ZMsg[QoreZMsg] msg2) [flags=CONSTANT] {
-    ReferenceHolder<QoreZMsg> holder(msg2, xsink);
-
     if (msg->check(xsink))
         return QoreValue();
 
-    return zmsg_eq(**msg, **msg2);
+    return zmsg_eq(**msg, ***msg2);
 }
 
 //! Sends a message to the zsys log sink (may be stdout, or system facility)
@@ -652,8 +644,6 @@ msg.save(f);
     to arbitrary change.
 */
 nothing ZMsg::save(Qore::File[File] file) {
-    ReferenceHolder<File> holder(file, xsink);
-
     if (msg->check(xsink))
         return QoreValue();
 

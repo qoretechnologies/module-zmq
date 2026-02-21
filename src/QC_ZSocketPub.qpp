@@ -65,8 +65,7 @@ ZSocketPub sock(ctx, "tcp://127.0.0.1:8001");
     @throw ZSOCKET-BIND-ERROR this exception is thrown if there is any error connecting the socket
  */
 ZSocketPub::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx, string endpoint) {
-   ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-   self->setPrivate(CID_ZSOCKETPUB, new QorePubZSock(*ctx, endpoint->c_str(), xsink));
+   self->setPrivate(CID_ZSOCKETPUB, new QorePubZSock(**ctx, endpoint->c_str(), xsink));
 }
 
 //! constructs an unconnected PUB zsocket
@@ -80,6 +79,5 @@ ZSocketPub sock(ctx);
     @throw ZSOCKET-CONSTRUCTOR-ERROR this exception is thrown if there is any error creating the socket
  */
 ZSocketPub::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx) {
-   ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-   self->setPrivate(CID_ZSOCKETPUB, new QorePubZSock(*ctx, nullptr, xsink));
+   self->setPrivate(CID_ZSOCKETPUB, new QorePubZSock(**ctx, nullptr, xsink));
 }

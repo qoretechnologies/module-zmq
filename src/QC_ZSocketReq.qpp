@@ -69,8 +69,7 @@ ZSocketReq sock(ctx, "my-identity", "tcp://127.0.0.1:8001");
     @note It is recommended to use an identity with \c REQ sockets
  */
 ZSocketReq::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx, *string identity, string endpoint) {
-    ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-    SimpleRefHolder<QoreReqZSock> req(new QoreReqZSock(*ctx, identity, endpoint->c_str(), xsink));
+    SimpleRefHolder<QoreReqZSock> req(new QoreReqZSock(**ctx, identity, endpoint->c_str(), xsink));
     if (!*xsink)
         self->setPrivate(CID_ZSOCKETREQ, req.release());
 }
@@ -92,6 +91,5 @@ req.connect("tcp://127.0.0.1:" + port);
     @note It is recommended to use an identity with \c REQ sockets
  */
 ZSocketReq::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx) {
-    ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-    self->setPrivate(CID_ZSOCKETREQ, new QoreReqZSock(*ctx, nullptr, nullptr, xsink));
+    self->setPrivate(CID_ZSOCKETREQ, new QoreReqZSock(**ctx, nullptr, nullptr, xsink));
 }

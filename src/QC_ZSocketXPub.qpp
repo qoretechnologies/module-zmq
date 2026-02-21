@@ -61,8 +61,7 @@ ZSocketXPub sock(ctx, "endpoint");
     @throw ZSOCKET-BIND-ERROR this exception is thrown if there is any error connecting the socket
  */
 ZSocketXPub::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx, string endpoint) {
-   ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-   self->setPrivate(CID_ZSOCKETXPUB, new QoreXPubZSock(*ctx, endpoint->c_str(), xsink));
+   self->setPrivate(CID_ZSOCKETXPUB, new QoreXPubZSock(**ctx, endpoint->c_str(), xsink));
 }
 
 //! constructs an unconnected \c XPUB zsocket
@@ -76,6 +75,5 @@ ZSocketXPub sock(ctx);
     @throw ZSOCKET-CONSTRUCTOR-ERROR this exception is thrown if there is any error creating the socket
  */
 ZSocketXPub::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx) {
-   ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-   self->setPrivate(CID_ZSOCKETXPUB, new QoreXPubZSock(*ctx, nullptr, xsink));
+   self->setPrivate(CID_ZSOCKETXPUB, new QoreXPubZSock(**ctx, nullptr, xsink));
 }

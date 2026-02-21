@@ -2093,7 +2093,6 @@ zsock.send(msg);
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
 */
 nothing ZSocket::send(Qore::ZMQ::ZMsg[QoreZMsg] msg) {
-    ReferenceHolder<QoreZMsg> holder(msg, xsink);
     {
         // enforce access from the correct thread
         if (zsock->check(xsink))
@@ -2106,7 +2105,7 @@ nothing ZSocket::send(Qore::ZMQ::ZMsg[QoreZMsg] msg) {
             size_t frame_count = 0;
             size_t total_size = 4;  // frame count header
 
-            for (zframe_t* frame = zmsg_first(**msg); frame; frame = zmsg_next(**msg)) {
+            for (zframe_t* frame = zmsg_first(***msg); frame; frame = zmsg_next(***msg)) {
                 ++frame_count;
                 total_size += 4 + zframe_size(frame);
             }
@@ -2120,7 +2119,7 @@ nothing ZSocket::send(Qore::ZMQ::ZMsg[QoreZMsg] msg) {
             serialized->append(&fc, 4);
 
             // Write each frame with length in network byte order
-            for (zframe_t* frame = zmsg_first(**msg); frame; frame = zmsg_next(**msg)) {
+            for (zframe_t* frame = zmsg_first(***msg); frame; frame = zmsg_next(***msg)) {
                 uint32_t len = htonl((uint32_t)zframe_size(frame));
                 serialized->append(&len, 4);
                 size_t frame_len = zframe_size(frame);
@@ -2233,7 +2232,6 @@ zsock.send(frame);
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
 */
 nothing ZSocket::send(Qore::ZMQ::ZFrame[QoreZFrame] frame, int flags = 0) {
-    ReferenceHolder<QoreZFrame> holder(frame, xsink);
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
@@ -3121,15 +3119,11 @@ static list<hash<ZmqPollInfo>> ZSocket::poll(list<hash<ZmqPollInfo>> items, time
     @throw ZSOCKET-PROXY-ERROR error executing the proxy call
 */
 static nothing ZSocket::proxy(ZSocket[QoreZSock] frontend, ZSocket[QoreZSock] backend, *ZSocket[QoreZSock] capture) {
-    ReferenceHolder<QoreZSock> frontend_holder(frontend, xsink);
-    ReferenceHolder<QoreZSock> backend_holder(backend, xsink);
-    ReferenceHolder<QoreZSock> capture_holder(capture, xsink);
-
     // enforce access from the correct thread
     if (frontend->check(xsink) || backend->check(xsink) || (capture && capture->check(xsink)))
         return QoreValue();
 
-    zmq_proxy(**frontend, **backend, capture ? **capture : nullptr);
+    zmq_proxy(***frontend, ***backend, capture ? ***capture : nullptr);
     // zmq_proxy() always returns -1 and errno set to EINTR or ETERM with an orderly shutdown
     if (errno != EINTR && errno != ETERM)
         zmq_error(xsink, "ZSOCKET-PROXY-ERROR", "error in ZSocket::proxy()");
@@ -3175,16 +3169,11 @@ ctrl.send("TERMINATE");
     @see proxy()
 */
 static nothing ZSocket::proxySteerable(ZSocket[QoreZSock] frontend, ZSocket[QoreZSock] backend, *ZSocket[QoreZSock] capture, ZSocket[QoreZSock] control) {
-    ReferenceHolder<QoreZSock> frontend_holder(frontend, xsink);
-    ReferenceHolder<QoreZSock> backend_holder(backend, xsink);
-    ReferenceHolder<QoreZSock> capture_holder(capture, xsink);
-    ReferenceHolder<QoreZSock> control_holder(control, xsink);
-
     // enforce access from the correct thread
     if (frontend->check(xsink) || backend->check(xsink) || (capture && capture->check(xsink)) || control->check(xsink))
         return QoreValue();
 
-    zmq_proxy_steerable(**frontend, **backend, capture ? **capture : nullptr, **control);
+    zmq_proxy_steerable(***frontend, ***backend, capture ? ***capture : nullptr, ***control);
     // zmq_proxy_steerable() always returns -1 and errno set to EINTR or ETERM with an orderly shutdown
     if (errno != EINTR && errno != ETERM)
         zmq_error(xsink, "ZSOCKET-PROXY-ERROR", "error in ZSocket::proxySteerable()");

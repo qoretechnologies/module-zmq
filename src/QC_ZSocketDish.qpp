@@ -47,8 +47,7 @@ ZSocketDish sock(ctx, "tcp://127.0.0.1:8001");
     @throw ZSOCKET-BIND-ERROR this exception is thrown if there is any error connecting the socket
  */
 ZSocketDish::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx, string endpoint) {
-   ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-   self->setPrivate(CID_ZSOCKETDISH, new QoreDishZSock(*ctx, endpoint->c_str(), xsink));
+   self->setPrivate(CID_ZSOCKETDISH, new QoreDishZSock(**ctx, endpoint->c_str(), xsink));
 }
 
 //! constructs an unconnected DISH zsocket
@@ -62,8 +61,7 @@ ZSocketDish sock(ctx);
     @throw ZSOCKET-CONSTRUCTOR-ERROR this exception is thrown if there is any error creating the socket
  */
 ZSocketDish::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx) {
-   ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-   self->setPrivate(CID_ZSOCKETDISH, new QoreDishZSock(*ctx, nullptr, xsink));
+   self->setPrivate(CID_ZSOCKETDISH, new QoreDishZSock(**ctx, nullptr, xsink));
 }
 
 //! Joins a message group on the DISH socket

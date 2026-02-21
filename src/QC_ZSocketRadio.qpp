@@ -47,8 +47,7 @@ ZSocketRadio sock(ctx, "udp://127.0.0.1:8001");
     @throw ZSOCKET-CONNECT-ERROR this exception is thrown if there is any error connecting the socket
  */
 ZSocketRadio::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx, string endpoint) {
-   ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-   self->setPrivate(CID_ZSOCKETRADIO, new QoreRadioZSock(*ctx, endpoint->c_str(), xsink));
+   self->setPrivate(CID_ZSOCKETRADIO, new QoreRadioZSock(**ctx, endpoint->c_str(), xsink));
 }
 
 //! constructs an unconnected RADIO zsocket
@@ -62,6 +61,5 @@ ZSocketRadio sock(ctx);
     @throw ZSOCKET-CONSTRUCTOR-ERROR this exception is thrown if there is any error creating the socket
  */
 ZSocketRadio::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx) {
-   ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-   self->setPrivate(CID_ZSOCKETRADIO, new QoreRadioZSock(*ctx, nullptr, xsink));
+   self->setPrivate(CID_ZSOCKETRADIO, new QoreRadioZSock(**ctx, nullptr, xsink));
 }

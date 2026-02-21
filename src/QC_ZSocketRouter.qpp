@@ -81,8 +81,7 @@ ZSocketRouter sock(ctx, "my-identity", "tcp://127.0.0.1:8001");
     @note It is recommended to use an identity with \c ROUTER sockets
 */
 ZSocketRouter::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx, *string identity, string endpoint) {
-    ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-    SimpleRefHolder<QoreRouterZSock> router(new QoreRouterZSock(*ctx, identity, endpoint->c_str(), xsink));
+    SimpleRefHolder<QoreRouterZSock> router(new QoreRouterZSock(**ctx, identity, endpoint->c_str(), xsink));
     if (!*xsink)
         self->setPrivate(CID_ZSOCKETROUTER, router.release());
 }
@@ -104,8 +103,7 @@ port = router.bind("tcp://127.0.0.1:*");
     @note It is recommended to use an identity with \c ROUTER sockets
  */
 ZSocketRouter::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx) {
-    ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-    self->setPrivate(CID_ZSOCKETROUTER, new QoreRouterZSock(*ctx, nullptr, nullptr, xsink));
+    self->setPrivate(CID_ZSOCKETROUTER, new QoreRouterZSock(**ctx, nullptr, nullptr, xsink));
 }
 
 //! sets the \c ZMQ_ROUTER_MANDATORY option on the socket

@@ -66,8 +66,7 @@ ZSocketRep sock(ctx, "my-identity", "tcp://127.0.0.1:8001");
     @note It is recommended to use an identity with \c REP sockets
  */
 ZSocketRep::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx, *string identity, string endpoint) {
-    ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-    self->setPrivate(CID_ZSOCKETREP, new QoreRepZSock(*ctx, identity, endpoint->c_str(), xsink));
+    self->setPrivate(CID_ZSOCKETREP, new QoreRepZSock(**ctx, identity, endpoint->c_str(), xsink));
 }
 
 //! constructs an unconnected \c REP zsocket with a default system-assigned identity
@@ -87,6 +86,5 @@ port = rep.bind("tcp://127.0.0.1:*");
     @note It is recommended to use an identity with \c REP sockets
  */
 ZSocketRep::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx) {
-    ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-    self->setPrivate(CID_ZSOCKETREP, new QoreRepZSock(*ctx, nullptr, nullptr, xsink));
+    self->setPrivate(CID_ZSOCKETREP, new QoreRepZSock(**ctx, nullptr, nullptr, xsink));
 }

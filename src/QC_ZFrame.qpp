@@ -224,9 +224,7 @@ bool b = frame.eq(frm);
     @return @ref Qore::True "True" if the two frames have identical size and data
 */
 bool ZFrame::eq(ZFrame[QoreZFrame] frm) [flags=CONSTANT] {
-   ReferenceHolder<QoreZFrame> holder(frm, xsink);
-
-   return (bool)zframe_eq(**frame, **frm);
+   return (bool)zframe_eq(**frame, ***frm);
 }
 
 //! Returns @ref Qore::True "True" if the frame body is equal to the string excluding the terminating null

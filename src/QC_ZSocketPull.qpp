@@ -60,8 +60,7 @@ ZSocketPull sock(ctx, "tcp://127.0.0.1:8001");
     @throw ZSOCKET-BIND-ERROR this exception is thrown if there is any error connecting the socket
  */
 ZSocketPull::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx, string endpoint) {
-   ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-   self->setPrivate(CID_ZSOCKETPULL, new QorePullZSock(*ctx, endpoint->c_str(), xsink));
+   self->setPrivate(CID_ZSOCKETPULL, new QorePullZSock(**ctx, endpoint->c_str(), xsink));
 }
 
 //! constructs an unconnected \c PULL zsocket
@@ -75,6 +74,5 @@ ZSocketPull sock(ctx);
     @throw ZSOCKET-CONSTRUCTOR-ERROR this exception is thrown if there is any error creating the socket
  */
 ZSocketPull::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx) {
-   ReferenceHolder<QoreZContext> ctx_holder(ctx, xsink);
-   self->setPrivate(CID_ZSOCKETPULL, new QorePullZSock(*ctx, nullptr, xsink));
+   self->setPrivate(CID_ZSOCKETPULL, new QorePullZSock(**ctx, nullptr, xsink));
 }
