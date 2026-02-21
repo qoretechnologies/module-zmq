@@ -249,6 +249,11 @@ else()
         add_compile_definitions(_GNU_SOURCE)
     endif()
 
+    # Tell czmq to use our FetchContent-built libzmq instead of finding the system one
+    set(libzmq_FOUND TRUE)
+    set(libzmq_INCLUDE_DIRS "${libzmq_SOURCE_DIR}/include;${libzmq_BINARY_DIR}")
+    set(libzmq_LIBRARIES libzmq-static)
+
     # Use FetchContent_Populate + add_subdirectory with EXCLUDE_FROM_ALL
     # This prevents czmq from installing its executables which we don't build
     FetchContent_GetProperties(czmq)

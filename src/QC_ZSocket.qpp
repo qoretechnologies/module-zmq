@@ -2326,6 +2326,10 @@ ZMsg ZSocket::recvMsg() {
                 return QoreValue();
             }
 
+            // Track remaining time for timeout enforcement
+            int64_t remaining_ms = old_timeout;
+            bool infinite = (old_timeout < 0);
+
             // Set polling timeout
             int poll_timeout = poll_interval_ms;
             if (zsock->setSocketOption(ZMQ_RCVTIMEO, &poll_timeout, sizeof(poll_timeout))) {
@@ -2342,16 +2346,34 @@ ZMsg ZSocket::recvMsg() {
                     return QoreValue();
                 }
 
+                // Adjust poll timeout for final iteration if needed
+                if (!infinite && remaining_ms < poll_interval_ms) {
+                    int final_timeout = remaining_ms > 0 ? static_cast<int>(remaining_ms) : 0;
+                    zsock->setSocketOption(ZMQ_RCVTIMEO, &final_timeout, sizeof(final_timeout));
+                }
+
                 int rc = zmq_msg_recv(&zmsg, **zsock, 0);
                 if (rc >= 0) {
                     zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
                     break;
                 }
 
-                if (errno == EINTR)
+                if (errno == EINTR) {
                     continue;
-                if (errno == EAGAIN)
-                    continue;  // Timeout - continue polling
+                }
+                if (errno == EAGAIN) {
+                    // Check if overall timeout has expired
+                    if (!infinite) {
+                        remaining_ms -= poll_interval_ms;
+                        if (remaining_ms <= 0) {
+                            zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+                            zmq_msg_close(&zmsg);
+                            zmq_error(xsink, "ZSOCKET-TIMEOUT-ERROR", "timeout in ZSocket::recvMsg()");
+                            return QoreValue();
+                        }
+                    }
+                    continue;
+                }
 
                 zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
                 zmq_msg_close(&zmsg);
@@ -2394,6 +2416,10 @@ ZMsg ZSocket::recvMsg() {
             return QoreValue();
         }
 
+        // Track remaining time for timeout enforcement
+        int64_t remaining_ms = old_timeout;
+        bool infinite = (old_timeout < 0);
+
         // Set polling timeout
         int poll_timeout = poll_interval_ms;
         if (zsock->setSocketOption(ZMQ_RCVTIMEO, &poll_timeout, sizeof(poll_timeout))) {
@@ -2409,6 +2435,12 @@ ZMsg ZSocket::recvMsg() {
                 return QoreValue();
             }
 
+            // Adjust poll timeout for final iteration if needed
+            if (!infinite && remaining_ms < poll_interval_ms) {
+                int final_timeout = remaining_ms > 0 ? static_cast<int>(remaining_ms) : 0;
+                zsock->setSocketOption(ZMQ_RCVTIMEO, &final_timeout, sizeof(final_timeout));
+            }
+
             msg = zmsg_recv(**zsock);
             if (msg) {
                 // Success - restore timeout and return
@@ -2416,10 +2448,19 @@ ZMsg ZSocket::recvMsg() {
                 break;
             }
 
-            if (errno == EINTR)
+            if (errno == EINTR) {
                 continue;
+            }
             if (errno == EAGAIN) {
-                // Timeout on this poll interval - continue polling
+                // Check if overall timeout has expired
+                if (!infinite) {
+                    remaining_ms -= poll_interval_ms;
+                    if (remaining_ms <= 0) {
+                        zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+                        zmq_error(xsink, "ZSOCKET-TIMEOUT-ERROR", "timeout in ZSocket::recvMsg()");
+                        return QoreValue();
+                    }
+                }
                 continue;
             }
 

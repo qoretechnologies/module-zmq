@@ -584,14 +584,15 @@ class ZmqClientServerTest inherits QUnit::Test {
         # Small delay to allow disconnect to propagate
         usleep(50ms);
 
-        # Try to send to the stale routing_id - this may silently fail or throw
-        # depending on ZMQ version, but should not crash
+        # Set a short send timeout to avoid blocking for the default 120s
+        server.setSendTimeout(1s);
+        # Try to send to the stale routing_id - should timeout or throw
         server.setRoutingId(saved_rid);
         try {
             server.send("response to disconnected client");
             # If it doesn't throw, that's OK - ZMQ may buffer the message
         } catch (hash<ExceptionInfo> ex) {
-            # Expected - host unreachable or similar
+            # Expected - timeout or host unreachable
             assertTrue(True);
         }
 
