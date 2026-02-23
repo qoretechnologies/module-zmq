@@ -120,6 +120,11 @@ public:
         return "ZSOCKET-THREAD-ERROR";
     }
 
+    //! returns the cached recv timeout (set once at construction, thread-safe to read)
+    DLLLOCAL int getRecvTimeoutMs() const {
+        return recv_timeout_ms;
+    }
+
     //! returns the socket type code
     virtual int getType() const = 0;
 
@@ -137,6 +142,7 @@ protected:
         zmq_setsockopt(sock, ZMQ_SNDTIMEO, &v, sizeof v);
         v = ZSOCK_TIMEOUT_MS;
         zmq_setsockopt(sock, ZMQ_RCVTIMEO, &v, sizeof v);
+        recv_timeout_ms = v;
 #ifdef ZMQ_CONNECT_TIMEOUT
         v = ZSOCK_TIMEOUT_MS;
         zmq_setsockopt(sock, ZMQ_CONNECT_TIMEOUT, &v, sizeof v);
@@ -144,6 +150,10 @@ protected:
     }
 
     void* sock = nullptr;
+
+    //! Cached recv timeout for thread-safe sockets (set once at construction, avoids
+    //! reading ZMQ_RCVTIMEO via getSocketOption which is not thread-safe)
+    int recv_timeout_ms = ZSOCK_TIMEOUT_MS;
 };
 
 class QoreZSockBind : public QoreZSock {

@@ -35,6 +35,7 @@
 #include <zmq.h>
 
 #include <assert.h>
+#include <chrono>
 #include <map>
 #include <vector>
 
@@ -2268,6 +2269,15 @@ ZFrame ZSocket::recvFrame() {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
+
+    // recvFrame() uses zframe_recv() which doesn't support the serialized multi-frame protocol
+    // used by CLIENT/SERVER sockets; use recvMsg() instead
+    if (isThreadSafeSocketType(zsock->getType())) {
+        xsink->raiseException("ZSOCKET-RECVFRAME-ERROR", "recvFrame() cannot be used with %s sockets; "
+            "use recvMsg() instead", zsock->getTypeName());
+        return QoreValue();
+    }
+
     zframe_t* frm;
     while (true) {
         frm = zframe_recv(**zsock);
@@ -2308,65 +2318,76 @@ ZMsg ZSocket::recvMsg() {
     if (qore_check_cancel(xsink))
         return QoreValue();
 
-    // For CLIENT/SERVER sockets, use single-frame receive with deserialization
+    // For CLIENT/SERVER sockets, use zmq_poller for thread-safe timeout handling
+    // instead of manipulating ZMQ_RCVTIMEO which is not thread-safe
     int sock_type = zsock->getType();
     if (isThreadSafeSocketType(sock_type)) {
         zmq_msg_t zmsg;
         zmq_msg_init(&zmsg);
 
-        {
-            const int poll_interval_ms = 500;
+        // Use the cached recv timeout (set once at construction) to avoid calling
+        // getSocketOption(ZMQ_RCVTIMEO) which is not thread-safe
+        int configured_timeout = zsock->getRecvTimeoutMs();
 
-            // Save current timeout
-            int old_timeout;
-            size_t len = sizeof(old_timeout);
-            if (zsock->getSocketOption(ZMQ_RCVTIMEO, &old_timeout, &len)) {
+        const long poll_interval_ms = 500;
+        bool infinite = (configured_timeout < 0);
+
+        // Use monotonic clock for accurate timeout accounting across EINTR/EAGAIN retries
+        auto deadline = std::chrono::steady_clock::now()
+            + std::chrono::milliseconds(infinite ? 0 : configured_timeout);
+
+        void* poller = zmq_poller_new();
+        if (!poller) {
+            zmq_msg_close(&zmsg);
+            zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error creating poller in ZSocket::recvMsg()");
+            return QoreValue();
+        }
+
+        if (zmq_poller_add(poller, **zsock, nullptr, ZMQ_POLLIN)) {
+            zmq_poller_destroy(&poller);
+            zmq_msg_close(&zmsg);
+            zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error adding socket to poller in ZSocket::recvMsg()");
+            return QoreValue();
+        }
+
+        while (true) {
+            // Check for interrupt
+            if (qore_check_cancel(xsink, "ZeroMQ receive")) {
+                zmq_poller_destroy(&poller);
                 zmq_msg_close(&zmsg);
-                zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error getting receive timeout in ZSocket::recvMsg()");
                 return QoreValue();
             }
 
-            // Track remaining time for timeout enforcement
-            int64_t remaining_ms = old_timeout;
-            bool infinite = (old_timeout < 0);
-
-            // Set polling timeout
-            int poll_timeout = poll_interval_ms;
-            if (zsock->setSocketOption(ZMQ_RCVTIMEO, &poll_timeout, sizeof(poll_timeout))) {
-                zmq_msg_close(&zmsg);
-                zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error setting receive timeout in ZSocket::recvMsg()");
-                return QoreValue();
-            }
-
-            while (true) {
-                // Check for interrupt
-                if (qore_check_cancel(xsink, "ZeroMQ receive")) {
-                    zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+            // Calculate poll timeout for this iteration
+            long poll_timeout = poll_interval_ms;
+            if (!infinite) {
+                auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    deadline - std::chrono::steady_clock::now()).count();
+                if (remaining <= 0) {
+                    zmq_poller_destroy(&poller);
                     zmq_msg_close(&zmsg);
+                    zmq_error(xsink, "ZSOCKET-TIMEOUT-ERROR", "timeout in ZSocket::recvMsg()");
                     return QoreValue();
                 }
-
-                // Adjust poll timeout for final iteration if needed
-                if (!infinite && remaining_ms < poll_interval_ms) {
-                    int final_timeout = remaining_ms > 0 ? static_cast<int>(remaining_ms) : 0;
-                    zsock->setSocketOption(ZMQ_RCVTIMEO, &final_timeout, sizeof(final_timeout));
+                if (remaining < poll_timeout) {
+                    poll_timeout = static_cast<long>(remaining);
                 }
+            }
 
-                int rc = zmq_msg_recv(&zmsg, **zsock, 0);
-                if (rc >= 0) {
-                    zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
-                    break;
-                }
+            zmq_poller_event_t event;
+            int rc = zmq_poller_wait(poller, &event, poll_timeout);
 
+            if (rc < 0) {
                 if (errno == EINTR) {
                     continue;
                 }
-                if (errno == EAGAIN) {
+                if (errno == EAGAIN || errno == ETIMEDOUT) {
                     // Check if overall timeout has expired
                     if (!infinite) {
-                        remaining_ms -= poll_interval_ms;
-                        if (remaining_ms <= 0) {
-                            zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+                        auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            deadline - std::chrono::steady_clock::now()).count();
+                        if (remaining <= 0) {
+                            zmq_poller_destroy(&poller);
                             zmq_msg_close(&zmsg);
                             zmq_error(xsink, "ZSOCKET-TIMEOUT-ERROR", "timeout in ZSocket::recvMsg()");
                             return QoreValue();
@@ -2374,12 +2395,29 @@ ZMsg ZSocket::recvMsg() {
                     }
                     continue;
                 }
-
-                zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+                zmq_poller_destroy(&poller);
                 zmq_msg_close(&zmsg);
-                zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error in ZSocket::recvMsg()");
+                zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error in zmq_poller_wait in ZSocket::recvMsg()");
                 return QoreValue();
             }
+
+            // Socket is readable - receive without blocking
+            rc = zmq_msg_recv(&zmsg, **zsock, ZMQ_DONTWAIT);
+            if (rc >= 0) {
+                zmq_poller_destroy(&poller);
+                break;
+            }
+            if (errno == EINTR) {
+                continue;
+            }
+            if (errno == EAGAIN) {
+                // Another thread consumed the message, continue polling
+                continue;
+            }
+            zmq_poller_destroy(&poller);
+            zmq_msg_close(&zmsg);
+            zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error in ZSocket::recvMsg()");
+            return QoreValue();
         }
 
         // For SERVER sockets, capture the routing_id
@@ -2500,48 +2538,78 @@ if (!exists msg) {
     if (zsock->check(xsink))
         return QoreValue();
 
-    // save current timeout
-    int old_timeout;
-    size_t len = sizeof(old_timeout);
-    if (zsock->getSocketOption(ZMQ_RCVTIMEO, &old_timeout, &len)) {
-        zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error getting receive timeout in ZSocket::tryRecvMsg()");
-        return QoreValue();
-    }
-
-    // set new timeout
     int new_timeout = timeout_ms;
-    if (zsock->setSocketOption(ZMQ_RCVTIMEO, &new_timeout, sizeof(new_timeout))) {
-        // best-effort restore of original timeout
-        zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
-        zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error setting receive timeout in ZSocket::tryRecvMsg()");
-        return QoreValue();
-    }
 
-    // For CLIENT/SERVER sockets, use single-frame receive with deserialization
+    // For CLIENT/SERVER sockets, use zmq_poller for thread-safe timeout handling
+    // instead of manipulating ZMQ_RCVTIMEO which is not thread-safe
     int sock_type = zsock->getType();
     if (isThreadSafeSocketType(sock_type)) {
         zmq_msg_t zmsg;
         zmq_msg_init(&zmsg);
 
-        int recv_errno;
-        while (true) {
-            int rc = zmq_msg_recv(&zmsg, **zsock, 0);
-            recv_errno = errno;
-            if (rc < 0) {
-                if (recv_errno == EINTR)
-                    continue;
-                zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
-                zmq_msg_close(&zmsg);
-                if (recv_errno == EAGAIN)
-                    return QoreValue();  // timeout - return NOTHING
-                errno = recv_errno;
-                zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error in ZSocket::tryRecvMsg()");
-                return QoreValue();
-            }
-            break;
+        void* poller = zmq_poller_new();
+        if (!poller) {
+            zmq_msg_close(&zmsg);
+            zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error creating poller in ZSocket::tryRecvMsg()");
+            return QoreValue();
         }
 
-        zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+        if (zmq_poller_add(poller, **zsock, nullptr, ZMQ_POLLIN)) {
+            zmq_poller_destroy(&poller);
+            zmq_msg_close(&zmsg);
+            zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error adding socket to poller in ZSocket::tryRecvMsg()");
+            return QoreValue();
+        }
+
+        // Use monotonic clock to track remaining time across EINTR retries
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(new_timeout);
+
+        while (true) {
+            // Calculate remaining timeout
+            long remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - std::chrono::steady_clock::now()).count();
+            if (remaining <= 0) {
+                zmq_poller_destroy(&poller);
+                zmq_msg_close(&zmsg);
+                return QoreValue();  // timeout - return NOTHING
+            }
+
+            zmq_poller_event_t event;
+            int rc = zmq_poller_wait(poller, &event, remaining);
+
+            if (rc < 0) {
+                if (errno == EINTR) {
+                    continue;  // retry with remaining time
+                }
+                if (errno == EAGAIN || errno == ETIMEDOUT) {
+                    zmq_poller_destroy(&poller);
+                    zmq_msg_close(&zmsg);
+                    return QoreValue();  // timeout - return NOTHING
+                }
+                zmq_poller_destroy(&poller);
+                zmq_msg_close(&zmsg);
+                zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error in zmq_poller_wait in ZSocket::tryRecvMsg()");
+                return QoreValue();
+            }
+
+            // Socket is readable - receive without blocking
+            rc = zmq_msg_recv(&zmsg, **zsock, ZMQ_DONTWAIT);
+            if (rc >= 0) {
+                zmq_poller_destroy(&poller);
+                break;
+            }
+            if (errno == EINTR) {
+                continue;
+            }
+            if (errno == EAGAIN) {
+                // Another thread consumed the message, continue polling
+                continue;
+            }
+            zmq_poller_destroy(&poller);
+            zmq_msg_close(&zmsg);
+            zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error in ZSocket::tryRecvMsg()");
+            return QoreValue();
+        }
 
         // For SERVER sockets, capture the routing_id
         uint32_t routing_id = 0;
@@ -2562,6 +2630,20 @@ if (!exists msg) {
 
         // Pass routing_id to ZMsg constructor for thread-safe access
         return new QoreObject(QC_ZMSG, getProgram(), new QoreZMsg(msg, routing_id));
+    }
+
+    // Non-thread-safe sockets: use ZMQ_RCVTIMEO save/restore (safe since single-thread access)
+    int old_timeout;
+    size_t len = sizeof(old_timeout);
+    if (zsock->getSocketOption(ZMQ_RCVTIMEO, &old_timeout, &len)) {
+        zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error getting receive timeout in ZSocket::tryRecvMsg()");
+        return QoreValue();
+    }
+
+    if (zsock->setSocketOption(ZMQ_RCVTIMEO, &new_timeout, sizeof(new_timeout))) {
+        zsock->setSocketOption(ZMQ_RCVTIMEO, &old_timeout, sizeof(old_timeout));
+        zmq_error(xsink, "ZSOCKET-RECVMSG-ERROR", "error setting receive timeout in ZSocket::tryRecvMsg()");
+        return QoreValue();
     }
 
     zmsg_t* msg;
@@ -2613,6 +2695,14 @@ if (!exists frame) {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
+
+    // tryRecvFrame() uses zframe_recv() which doesn't support the serialized multi-frame protocol
+    // used by CLIENT/SERVER sockets; use tryRecvMsg() instead
+    if (isThreadSafeSocketType(zsock->getType())) {
+        xsink->raiseException("ZSOCKET-RECVFRAME-ERROR", "tryRecvFrame() cannot be used with %s sockets; "
+            "use tryRecvMsg() instead", zsock->getTypeName());
+        return QoreValue();
+    }
 
     // save current timeout
     int old_timeout;
