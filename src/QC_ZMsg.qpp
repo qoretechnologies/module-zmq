@@ -74,7 +74,7 @@ int QoreZMsg::addFrame(const QoreValue v, int i, int max, ExceptionSink* xsink) 
             break;
         }
         case NT_STRING: {
-            const QoreStringNode* str = v.get<const QoreStringNode>();
+            QoreStringValueHelper str(v);
             int rc = zmsg_addmem(msg, str->c_str(), str->size());
             if (rc) {
                 zmq_error(xsink, "ZMSG-ERROR", "error in zmsg_addmem()");
