@@ -73,8 +73,8 @@ ZFrame frame(str);
 
     The string data is copied to the frame's memory.
  */
-ZFrame::constructor(string str) {
-   self->setPrivate(CID_ZFRAME, new QoreZFrame(str->c_str(), str->size()));
+ZFrame::constructor(string text) [flags=NAMED_ARGS] {
+   self->setPrivate(CID_ZFRAME, new QoreZFrame(text->c_str(), text->size()));
 }
 
 //! constructs a ZFrame from the binary data supplied
@@ -85,8 +85,8 @@ ZFrame frame(bin);
 
     The binary data is copied to the frame's memory.
  */
-ZFrame::constructor(binary b) {
-   self->setPrivate(CID_ZFRAME, new QoreZFrame(b->getPtr(), b->size()));
+ZFrame::constructor(binary data) [flags=NAMED_ARGS] {
+   self->setPrivate(CID_ZFRAME, new QoreZFrame(data->getPtr(), data->size()));
 }
 
 //! copies a ZFrame object
@@ -155,7 +155,7 @@ ZMsg ZFrame::decode() [flags=CONSTANT] {
     - Other properties may be defined based on the underlying security mechanism
     - only available if the underlying library supports it; check @ref Qore::ZMQ::HAVE_ZFRAME_META "HAVE_ZFRAME_META" before calling this method
  */
-*string ZFrame::meta(string property) [flags=CONSTANT] {
+*string ZFrame::meta(string property) [flags=CONSTANT,NAMED_ARGS] {
 #ifdef HAVE_ZFRAME_META
    TempEncodingHelper prop(property, QCS_UTF8, xsink);
    if (*xsink)
@@ -219,12 +219,12 @@ bool ZFrame::more() [flags=CONSTANT] {
 bool b = frame.eq(frm);
     @endcode
 
-    @param frm the frame to compare
+    @param other the frame to compare
 
     @return @ref Qore::True "True" if the two frames have identical size and data
 */
-bool ZFrame::eq(ZFrame[QoreZFrame] frm) [flags=CONSTANT] {
-   return (bool)zframe_eq(**frame, ***frm);
+bool ZFrame::eq(ZFrame[QoreZFrame] other) [flags=CONSTANT,NAMED_ARGS] {
+   return (bool)zframe_eq(**frame, ***other);
 }
 
 //! Returns @ref Qore::True "True" if the frame body is equal to the string excluding the terminating null
@@ -233,12 +233,12 @@ bool ZFrame::eq(ZFrame[QoreZFrame] frm) [flags=CONSTANT] {
 bool b = frame.streq(str);
     @endcode
 
-    @param str the string to compare the frame's body with
+    @param text the string to compare the frame's body with
 
     @return @ref Qore::True "True" if the frame body is equal to the string excluding the terminating null
 */
-bool ZFrame::streq(string str) [flags=CONSTANT] {
-   return (bool)zframe_streq(**frame, str->c_str());
+bool ZFrame::streq(string text) [flags=CONSTANT,NAMED_ARGS] {
+   return (bool)zframe_streq(**frame, text->c_str());
 }
 
 //! Reads a signed 16-bit integer from the given offset in the frame using native byte order
@@ -258,7 +258,7 @@ int i = frame.readi2(0);
 
     @see readi2N()
 */
-int ZFrame::readi2(int offset) {
+int ZFrame::readi2(int offset) [flags=NAMED_ARGS] {
     size_t size = zframe_size(**frame);
     if (offset < 0 || (size < 2) || ((size_t)offset > (size - 2))) {
         xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 2 bytes from byte offset " QLLD "; frame size: " QLLD, offset, size);
@@ -286,7 +286,7 @@ int i = frame.readi4(0);
 
     @see readi4N()
 */
-int ZFrame::readi4(int offset) {
+int ZFrame::readi4(int offset) [flags=NAMED_ARGS] {
     size_t size = zframe_size(**frame);
     if (offset < 0 || (size < 4) || ((size_t)offset > (size - 4))) {
         xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 4 bytes from byte offset " QLLD "; frame size: " QLLD, offset, size);
@@ -314,7 +314,7 @@ int i = frame.readi2N(0);
 
     @see readi2()
 */
-int ZFrame::readi2N(int offset) {
+int ZFrame::readi2N(int offset) [flags=NAMED_ARGS] {
     size_t size = zframe_size(**frame);
     if (offset < 0 || (size < 2) || ((size_t)offset > (size - 2))) {
         xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 2 bytes from byte offset " QLLD "; frame size: " QLLD, offset, size);
@@ -342,7 +342,7 @@ int i = frame.readi4N(0);
 
     @see readi4()
 */
-int ZFrame::readi4N(int offset) {
+int ZFrame::readi4N(int offset) [flags=NAMED_ARGS] {
     size_t size = zframe_size(**frame);
     if (offset < 0 || (size < 4) || ((size_t)offset > (size - 4))) {
         xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 4 bytes from byte offset " QLLD "; frame size: " QLLD, offset, size);
@@ -368,7 +368,7 @@ int i = frame.readi8N(0);
     @note This method reads data in network byte order (big-endian) for portable network protocols.
     64-bit network byte order conversion is performed manually for portability.
 */
-int ZFrame::readi8N(int offset) {
+int ZFrame::readi8N(int offset) [flags=NAMED_ARGS] {
     size_t size = zframe_size(**frame);
     if (offset < 0 || (size < 8) || ((size_t)offset > (size - 8))) {
         xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 8 bytes from byte offset " QLLD "; frame size: " QLLD, offset, size);
@@ -392,6 +392,6 @@ frame.print("my-frame");
 
     @param prefix an optional string to log before the frame
 */
-nothing ZFrame::print(*string prefix) {
+nothing ZFrame::print(*string prefix) [flags=NAMED_ARGS] {
    zframe_print(**frame, prefix ? prefix->c_str() : nullptr);
 }

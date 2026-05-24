@@ -27,6 +27,7 @@ class ZmqTest inherits QUnit::Test {
 
     constructor() : QUnit::Test("ZmqTest", "1.0") {
         addTestCase("basic", \basicTest());
+        addTestCase("named arguments", \namedArgumentTest());
         addTestCase("zcontext", \zContextTest());
         addTestCase("zsocket smoke", \zSocketSmokeTest());
         addTestCase("zsocket push/pull", \zSocketPushPullTest());
@@ -64,6 +65,71 @@ class ZmqTest inherits QUnit::Test {
         assertEq(Type::Int, h.patch.type());
         assertEq(Type::String, h.version.type());
         assertEq(h.version, sprintf("%d.%d.%d", h.major, h.minor, h.patch));
+    }
+
+    namedArgumentTest() {
+        hash<ZmqCurveKeyInfo> key = zmq_curve_keypair();
+        assertEq(key.pub, zmq_curve_public(secret: key.secret), "named: curve public key");
+
+        binary raw = <01020304>;
+        string encoded = zmq_z85_encode(data: raw);
+        assertEq(raw, zmq_z85_decode(encoded: encoded), "named: z85 round trip");
+
+        ZFrame text_frame(text: "ABCD");
+        assertEq(True, text_frame.streq(text: "ABCD"), "named: frame string constructor");
+        assertEq(True, text_frame.eq(other: new ZFrame(text: "ABCD")), "named: frame equality");
+
+        ZFrame int_frame(data: <0000002a0000000000000007>);
+        assertEq(42, int_frame.readi4N(offset: 0), "named: frame readi4N");
+        assertEq(7, int_frame.readi8N(offset: 4), "named: frame readi8N");
+
+        ZMsg msg(frames: ("one", binary("two")));
+        msg.add(text: "three");
+        msg.push(data: binary("zero"));
+        assertEq("zero", msg.popStr(encoding: "UTF-8"), "named: message push binary");
+        assertEq("one", msg.popStr(encoding: "UTF-8"), "named: message list constructor");
+        assertEq(binary("two"), msg.popBin(), "named: message add binary");
+        assertEq("three", msg.popStr(encoding: "UTF-8"), "named: message add text");
+
+        msg.add(frame: new ZFrame(text: "four"));
+        ZFrame added = msg.popFrame();
+        assertEq(True, added.streq(text: "four"), "named: message add frame");
+
+        ZMsg submsg(frames: ("inner",));
+        msg.add(submsg: submsg);
+        ZMsg inner = msg.popMsg();
+        assertEq("inner", inner.popStr(encoding: "UTF-8"), "named: message add submessage");
+
+        ZContext zcontext();
+        zcontext.setOption(option: ZMQ_IPV6, value: 0);
+        assertEq(0, zcontext.getOption(option: ZMQ_IPV6), "named: context option");
+
+        ZSocketPush writer(zcontext: zcontext, endpoint: "@tcp://127.0.0.1:*");
+        writer.setOption(option: ZMQ_LINGER, value: 0);
+        assertEq(0, writer.getOption(option: ZMQ_LINGER), "named: socket option");
+        writer.setSendHighWaterMark(value: 10);
+        writer.setRecvHighWaterMark(value: 10);
+        writer.setSendTimeout(timeout_ms: 1s);
+        writer.setRecvTimeout(timeout_ms: 1s);
+        writer.setTimeout(timeout_ms: 1s);
+        writer.setIdentity(identity: "named-writer");
+
+        ZSocketPull reader(zcontext: zcontext, endpoint: ">" + writer.endpoint());
+        writer.waitWrite(timeout_ms: 1s);
+        writer.send(frame: new ZFrame(text: "socket frame"), flags: 0);
+        reader.waitRead(timeout_ms: 1s);
+
+        list<hash<ZmqPollInfo>> poll_items;
+        poll_items += new hash<ZmqPollInfo>((
+            "socket": reader,
+            "events": ZMQ_POLLIN,
+        ));
+        list<hash<ZmqPollInfo>> ready = ZSocket::poll(items: poll_items, timeout_ms: 1s);
+        assertEq(1, ready.size(), "named: poll");
+
+        ZFrame received = reader.recvFrame();
+        assertEq(True, received.streq(text: "socket frame"), "named: socket frame send");
+        assertEq(NOTHING, reader.tryRecvFrame(timeout_ms: 1ms), "named: tryRecvFrame timeout");
     }
 
     zContextTest() {
@@ -922,7 +988,7 @@ class ZmqTest inherits QUnit::Test {
             assertThrows("ZSOCKET-OPTION-ERROR", \sock.getOption(), 99999);
         }
 
-        # negative test - invalid bufsize for getOption
+        # negative test - invalid buffer_size for getOption
         {
             ZSocketPush sock(zctx);
             assertThrows("ZSOCKET-GETOPTION-ERROR", \sock.getOption(), (ZMQ_LINGER, 0));

@@ -108,6 +108,8 @@ static SimpleRefHolder<BinaryNode> serializeFrames(const QoreListNode* args, siz
     frames.reserve(size);
 
     for (size_t i = 0; i < size; ++i) {
+        if (i && !(i % 100) && qore_check_cancel(xsink, "ZSocket frame serialization"))
+            return nullptr;
         QoreValue arg = args->retrieveEntry(i);
         const char* ptr;
         size_t len;
@@ -135,7 +137,10 @@ static SimpleRefHolder<BinaryNode> serializeFrames(const QoreListNode* args, siz
     result->append(&frame_count, 4);
 
     // Write each frame with length in network byte order
-    for (const auto& frame : frames) {
+    for (size_t i = 0; i < frames.size(); ++i) {
+        if (i && !(i % 100) && qore_check_cancel(xsink, "ZSocket frame serialization"))
+            return nullptr;
+        const auto& frame = frames[i];
         uint32_t len = htonl((uint32_t)frame.second);
         result->append(&len, 4);
         if (frame.second > 0) {
@@ -202,6 +207,10 @@ static zmsg_t* deserializeFrames(const void* data, size_t data_size, ExceptionSi
     }
 
     for (uint32_t i = 0; i < frame_count; ++i) {
+        if (i && !(i % 100) && qore_check_cancel(xsink, "ZSocket frame deserialization")) {
+            zmsg_destroy(&msg);
+            return nullptr;
+        }
         if (ptr + 4 > end) {
             xsink->raiseException("ZSOCKET-DESERIALIZE-ERROR",
                 "malformed serialized frame data: truncated length at frame %d", (int)i);
@@ -1585,7 +1594,7 @@ ZSocket::copy() {
 zsock.setOption(ZMQ_RCVHWM, 2000);
     @endcode
 
-    @param opt the option code; see @ref zsocket_options for possibile values
+    @param option the option code; see @ref zsocket_options for possibile values
     @param value the integer value for the option; this method variant processes options that take integer values
 
     If any errors occur setting the option, an exception is raised.
@@ -1595,15 +1604,16 @@ zsock.setOption(ZMQ_RCVHWM, 2000);
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
 */
-ZSocket::setOption(int opt, int value) {
+ZSocket::setOption(int option, int value) [flags=NAMED_ARGS] {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
 
     // get option info
-    qzmq_opt_map_t::const_iterator i = qzmq_opt_map.find(opt);
+    qzmq_opt_map_t::const_iterator i = qzmq_opt_map.find(option);
     if (i == qzmq_opt_map.end()) {
-        xsink->raiseException("ZSOCKET-OPTION-ERROR", "option " QLLD " is unknown; cannot set an option value for an unknown option", opt);
+        xsink->raiseException("ZSOCKET-OPTION-ERROR",
+            "option " QLLD " is unknown; cannot set an option value for an unknown option", option);
         return QoreValue();
     }
 
@@ -1611,30 +1621,30 @@ ZSocket::setOption(int opt, int value) {
     switch (i->second) {
         case QZOT_INT: {
             int v = value;
-            rc = zsock->setSocketOption(opt, &v, sizeof v);
+            rc = zsock->setSocketOption(option, &v, sizeof v);
             break;
         }
 
         case QZOT_INT64: {
             int64_t v = value;
-            rc = zsock->setSocketOption(opt, &v, sizeof v);
+            rc = zsock->setSocketOption(option, &v, sizeof v);
             break;
         }
 
         case QZOT_BOOL: {
             int v = value ? 1 : 0;
-            rc = zsock->setSocketOption(opt, &v, sizeof v);
+            rc = zsock->setSocketOption(option, &v, sizeof v);
             break;
         }
 
         default:
-            xsink->raiseException("ZSOCKET-OPTION-ERROR", "option " QLLD " does not take an integer value; please check the option description and try again with a correct value type", opt);
+            xsink->raiseException("ZSOCKET-OPTION-ERROR", "option " QLLD " does not take an integer value; please check the option description and try again with a correct value type", option);
             rc = 0;
             break;
     }
 
     if (rc)
-        zmq_error(xsink, "ZSOCKET-SETOPTION-ERROR", "error in zmq_setsockopt(" QLLD ")", opt);
+        zmq_error(xsink, "ZSOCKET-SETOPTION-ERROR", "error in zmq_setsockopt(" QLLD ")", option);
 }
 
 //! Sets the given socket option to the given value
@@ -1643,7 +1653,7 @@ ZSocket::setOption(int opt, int value) {
 zsock.setOption(ZMQ_CURVESERVER, True);
     @endcode
 
-    @param opt the option code; see @ref zsocket_options for possibile values
+    @param option the option code; see @ref zsocket_options for possibile values
     @param value the boolean value for the option; this method variant processes options that take boolean values
 
     If any errors occur setting the option, an exception is raised.
@@ -1653,15 +1663,16 @@ zsock.setOption(ZMQ_CURVESERVER, True);
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
 */
-ZSocket::setOption(int opt, bool value) {
+ZSocket::setOption(int option, bool value) [flags=NAMED_ARGS] {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
 
     // get option info
-    qzmq_opt_map_t::const_iterator i = qzmq_opt_map.find(opt);
+    qzmq_opt_map_t::const_iterator i = qzmq_opt_map.find(option);
     if (i == qzmq_opt_map.end()) {
-        xsink->raiseException("ZSOCKET-OPTION-ERROR", "option " QLLD " is unknown; cannot set an option value for an unknown option", opt);
+        xsink->raiseException("ZSOCKET-OPTION-ERROR",
+            "option " QLLD " is unknown; cannot set an option value for an unknown option", option);
         return QoreValue();
     }
 
@@ -1669,18 +1680,18 @@ ZSocket::setOption(int opt, bool value) {
     switch (i->second) {
         case QZOT_BOOL: {
             int v = value ? 1 : 0;
-            rc = zsock->setSocketOption(opt, &v, sizeof v);
+            rc = zsock->setSocketOption(option, &v, sizeof v);
             break;
         }
 
         default:
-            xsink->raiseException("ZSOCKET-OPTION-ERROR", "option " QLLD " does not take a boolean value; please check the option description and try again with a correct value type", opt);
+            xsink->raiseException("ZSOCKET-OPTION-ERROR", "option " QLLD " does not take a boolean value; please check the option description and try again with a correct value type", option);
             rc = 0;
             break;
     }
 
     if (rc)
-        zmq_error(xsink, "ZSOCKET-SETOPTION-ERROR", "error in zmq_setsockopt(" QLLD ")", opt);
+        zmq_error(xsink, "ZSOCKET-SETOPTION-ERROR", "error in zmq_setsockopt(" QLLD ")", option);
 }
 
 //! Sets the given socket option to the given value
@@ -1689,7 +1700,7 @@ ZSocket::setOption(int opt, bool value) {
 zsock.setOption(ZMQ_CONNECT_RID, bin);
     @endcode
 
-    @param opt the option code; see @ref zsocket_options for possibile values
+    @param option the option code; see @ref zsocket_options for possibile values
     @param value the binary or string value for the option; this method variant processes options that take binary or string values
 
     If any errors occur setting the option, an exception is raised.
@@ -1699,15 +1710,16 @@ zsock.setOption(ZMQ_CONNECT_RID, bin);
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
 */
-ZSocket::setOption(int opt, data value) {
+ZSocket::setOption(int option, data value) [flags=NAMED_ARGS] {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
 
     // get option info
-    qzmq_opt_map_t::const_iterator i = qzmq_opt_map.find(opt);
+    qzmq_opt_map_t::const_iterator i = qzmq_opt_map.find(option);
     if (i == qzmq_opt_map.end()) {
-        xsink->raiseException("ZSOCKET-OPTION-ERROR", "option " QLLD " is unknown; cannot set an option value for an unknown option", opt);
+        xsink->raiseException("ZSOCKET-OPTION-ERROR",
+            "option " QLLD " is unknown; cannot set an option value for an unknown option", option);
         return QoreValue();
     }
 
@@ -1719,38 +1731,38 @@ ZSocket::setOption(int opt, data value) {
     switch (i->second) {
         case QZOT_STR:
         case QZOT_BIN:
-            rc = zsock->setSocketOption(opt, ptr, len);
+            rc = zsock->setSocketOption(option, ptr, len);
             break;
 
         case QZOT_CURVEKEY: {
             if (value.getType() == NT_STRING) {
                 if (len != 40) {
-                    xsink->raiseException("ZSOCKET-OPTION-ERROR", "option " QLLD " requires a 40-byte string in Z85 printable format; the given string is %ld byte%s long", opt, len, len == 1 ? "" : "s");
+                    xsink->raiseException("ZSOCKET-OPTION-ERROR", "option " QLLD " requires a 40-byte string in Z85 printable format; the given string is %ld byte%s long", option, len, len == 1 ? "" : "s");
                     rc = 0;
                 }
                 else {
-                    rc = zsock->setSocketOption(opt, ptr, len);
+                    rc = zsock->setSocketOption(option, ptr, len);
                 }
                 break;
             }
             if (len != 32) {
-                xsink->raiseException("ZSOCKET-OPTION-ERROR", "option " QLLD " requires a 32-byte binary value; the given value is %ld byte%s long", opt, len, len == 1 ? "" : "s");
+                xsink->raiseException("ZSOCKET-OPTION-ERROR", "option " QLLD " requires a 32-byte binary value; the given value is %ld byte%s long", option, len, len == 1 ? "" : "s");
                 rc = 0;
             }
             else {
-                rc = zsock->setSocketOption(opt, ptr, len);
+                rc = zsock->setSocketOption(option, ptr, len);
             }
             break;
         }
 
         default:
-            xsink->raiseException("ZSOCKET-OPTION-ERROR", "option " QLLD " does not take a binary value; please check the option description and try again with a correct value type", opt);
+            xsink->raiseException("ZSOCKET-OPTION-ERROR", "option " QLLD " does not take a binary value; please check the option description and try again with a correct value type", option);
             rc = 0;
             break;
     }
 
     if (rc)
-        zmq_error(xsink, "ZSOCKET-SETOPTION-ERROR", "error in zmq_setsockopt(" QLLD ")", opt);
+        zmq_error(xsink, "ZSOCKET-SETOPTION-ERROR", "error in zmq_setsockopt(" QLLD ")", option);
 }
 
 //! Retrieves the value of the given socket option
@@ -1759,8 +1771,8 @@ ZSocket::setOption(int opt, data value) {
 int v = zsock.getOption(ZMQ_RCVHWM);
     @endcode
 
-    @param opt the option code; see @ref zsocket_options for possibile values
-    @param bufsize the size of the buffer for string and binary options
+    @param option the option code; see @ref zsocket_options for possibile values
+    @param buffer_size the size of the buffer for string and binary options
 
     @return the value for the option; the return type depends on the option
 
@@ -1771,21 +1783,23 @@ int v = zsock.getOption(ZMQ_RCVHWM);
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
 */
-auto ZSocket::getOption(int opt, int bufsize = 100) [flags=RET_VALUE_ONLY] {
+auto ZSocket::getOption(int option, int buffer_size = 100) [flags=RET_VALUE_ONLY,NAMED_ARGS] {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
 
-    // check bufsize
-    if (bufsize <= 0) {
-        xsink->raiseException("ZSOCKET-GETOPTION-ERROR", "bufsize " QLLD " is illegal; expecting a positive integer", bufsize);
+    // check buffer_size
+    if (buffer_size <= 0) {
+        xsink->raiseException("ZSOCKET-GETOPTION-ERROR",
+            "buffer_size " QLLD " is illegal; expecting a positive integer", buffer_size);
         return QoreValue();
     }
 
     // get option info
-    qzmq_opt_map_t::const_iterator i = qzmq_opt_map.find(opt);
+    qzmq_opt_map_t::const_iterator i = qzmq_opt_map.find(option);
     if (i == qzmq_opt_map.end()) {
-        xsink->raiseException("ZSOCKET-OPTION-ERROR", "option " QLLD " is unknown; cannot set an option value for an unknown option", opt);
+        xsink->raiseException("ZSOCKET-OPTION-ERROR",
+            "option " QLLD " is unknown; cannot set an option value for an unknown option", option);
         return QoreValue();
     }
 
@@ -1795,7 +1809,7 @@ auto ZSocket::getOption(int opt, int bufsize = 100) [flags=RET_VALUE_ONLY] {
         case QZOT_INT: {
             int v;
             size_t len = sizeof v;
-            rc = zsock->getSocketOption(opt, &v, &len);
+            rc = zsock->getSocketOption(option, &v, &len);
             if (!rc)
                 rv = v;
             break;
@@ -1804,7 +1818,7 @@ auto ZSocket::getOption(int opt, int bufsize = 100) [flags=RET_VALUE_ONLY] {
         case QZOT_BOOL: {
             int v;
             size_t len = sizeof v;
-            rc = zsock->getSocketOption(opt, &v, &len);
+            rc = zsock->getSocketOption(option, &v, &len);
             if (!rc)
                 rv = (bool)v;
             break;
@@ -1813,7 +1827,7 @@ auto ZSocket::getOption(int opt, int bufsize = 100) [flags=RET_VALUE_ONLY] {
         case QZOT_INT64: {
             int64_t v;
             size_t len = sizeof v;
-            rc = zsock->getSocketOption(opt, &v, &len);
+            rc = zsock->getSocketOption(option, &v, &len);
             if (!rc)
                 rv = v;
             break;
@@ -1822,9 +1836,9 @@ auto ZSocket::getOption(int opt, int bufsize = 100) [flags=RET_VALUE_ONLY] {
         case QZOT_CURVEKEY:
         case QZOT_BIN: {
             SimpleRefHolder<BinaryNode> b(new BinaryNode);
-            b->preallocate(bufsize);
-            size_t len = bufsize;
-            rc = zsock->getSocketOption(opt, (void*)b->getPtr(), &len);
+            b->preallocate(buffer_size);
+            size_t len = buffer_size;
+            rc = zsock->getSocketOption(option, (void*)b->getPtr(), &len);
             if (!rc) {
                 b->setSize(len);
                 rv = b.release();
@@ -1834,9 +1848,9 @@ auto ZSocket::getOption(int opt, int bufsize = 100) [flags=RET_VALUE_ONLY] {
 
         case QZOT_STR: {
             SimpleRefHolder<QoreStringNode> str(new QoreStringNode);
-            str->reserve(bufsize + 1);
-            size_t len = bufsize + 1;
-            rc = zsock->getSocketOption(opt, (void*)str->c_str(), &len);
+            str->reserve(buffer_size + 1);
+            size_t len = buffer_size + 1;
+            rc = zsock->getSocketOption(option, (void*)str->c_str(), &len);
             if (!rc) {
                 // ZMQ includes null terminator in len for string options
                 str->terminate(len > 0 ? len - 1 : 0);
@@ -1847,7 +1861,7 @@ auto ZSocket::getOption(int opt, int bufsize = 100) [flags=RET_VALUE_ONLY] {
     }
 
     if (rc) {
-        zmq_error(xsink, "ZSOCKET-GETOPTION-ERROR", "error in zmq_getsockopt(" QLLD ")", opt);
+        zmq_error(xsink, "ZSOCKET-GETOPTION-ERROR", "error in zmq_getsockopt(" QLLD ")", option);
         return QoreValue();
     }
 
@@ -2061,7 +2075,7 @@ zsock.attach(endpoints_str, True);
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
 */
-nothing ZSocket::attach(*string endpoints, bool do_bind = False) {
+nothing ZSocket::attach(*string endpoints, bool do_bind = False) [flags=NAMED_ARGS] {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
@@ -2093,7 +2107,7 @@ zsock.send(msg);
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
 */
-nothing ZSocket::send(Qore::ZMQ::ZMsg[QoreZMsg] msg) {
+nothing ZSocket::send(Qore::ZMQ::ZMsg[QoreZMsg] msg) [flags=NAMED_ARGS] {
     {
         // enforce access from the correct thread
         if (zsock->check(xsink))
@@ -2107,6 +2121,8 @@ nothing ZSocket::send(Qore::ZMQ::ZMsg[QoreZMsg] msg) {
             size_t total_size = 4;  // frame count header
 
             for (zframe_t* frame = zmsg_first(***msg); frame; frame = zmsg_next(***msg)) {
+                if (frame_count && !(frame_count % 100) && qore_check_cancel(xsink, "ZSocket message serialization"))
+                    return QoreValue();
                 ++frame_count;
                 total_size += 4 + zframe_size(frame);
             }
@@ -2120,13 +2136,17 @@ nothing ZSocket::send(Qore::ZMQ::ZMsg[QoreZMsg] msg) {
             serialized->append(&fc, 4);
 
             // Write each frame with length in network byte order
+            size_t frame_index = 0;
             for (zframe_t* frame = zmsg_first(***msg); frame; frame = zmsg_next(***msg)) {
+                if (frame_index && !(frame_index % 100) && qore_check_cancel(xsink, "ZSocket message serialization"))
+                    return QoreValue();
                 uint32_t len = htonl((uint32_t)zframe_size(frame));
                 serialized->append(&len, 4);
                 size_t frame_len = zframe_size(frame);
                 if (frame_len > 0) {
                     serialized->append(zframe_data(frame), frame_len);
                 }
+                ++frame_index;
             }
 
             // For SERVER sockets, set the routing_id on the outgoing message
@@ -2190,7 +2210,7 @@ zsock.waitRead(10s);
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
 */
-nothing ZSocket::waitRead(timeout timeout_ms) {
+nothing ZSocket::waitRead(timeout timeout_ms) [flags=NAMED_ARGS] {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
@@ -2210,7 +2230,7 @@ zsock.waitWrite(10s);
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
 */
-nothing ZSocket::waitWrite(timeout timeout_ms) {
+nothing ZSocket::waitWrite(timeout timeout_ms) [flags=NAMED_ARGS] {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
@@ -2232,7 +2252,7 @@ zsock.send(frame);
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
 */
-nothing ZSocket::send(Qore::ZMQ::ZFrame[QoreZFrame] frame, int flags = 0) {
+nothing ZSocket::send(Qore::ZMQ::ZFrame[QoreZFrame] frame, int flags = 0) [flags=NAMED_ARGS] {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
@@ -2533,7 +2553,7 @@ if (!exists msg) {
 
     @see recvMsg()
 */
-*ZMsg ZSocket::tryRecvMsg(timeout timeout_ms) {
+*ZMsg ZSocket::tryRecvMsg(timeout timeout_ms) [flags=NAMED_ARGS] {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
@@ -2691,7 +2711,7 @@ if (!exists frame) {
 
     @see recvFrame()
 */
-*ZFrame ZSocket::tryRecvFrame(timeout timeout_ms) {
+*ZFrame ZSocket::tryRecvFrame(timeout timeout_ms) [flags=NAMED_ARGS] {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
@@ -2768,7 +2788,7 @@ zsock.setRecvHighWaterMark(2000);
     @see
     - @ref ZSocket::setSendHighWaterMark()
  */
- nothing ZSocket::setRecvHighWaterMark(int value) {
+ nothing ZSocket::setRecvHighWaterMark(int value) [flags=NAMED_ARGS] {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
@@ -2802,7 +2822,7 @@ zsock.setSendHighWaterMark(2000);
     @see
     - @ref ZSocket::setRecvHighWaterMark()
  */
- nothing ZSocket::setSendHighWaterMark(int value) {
+ nothing ZSocket::setSendHighWaterMark(int value) [flags=NAMED_ARGS] {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
@@ -2831,7 +2851,7 @@ zsock.setSendTimeout(30s);
     - @ref ZSocket::setTimeout()
     - @ref ZMQ_SNDTIMEO
  */
-nothing ZSocket::setSendTimeout(timeout timeout_ms) {
+nothing ZSocket::setSendTimeout(timeout timeout_ms) [flags=NAMED_ARGS] {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
@@ -2860,7 +2880,7 @@ zsock.setRecvTimeout(30s);
     - @ref ZSocket::setTimeout()
     - @ref ZMQ_RCVTIMEO
  */
-nothing ZSocket::setRecvTimeout(timeout timeout_ms) {
+nothing ZSocket::setRecvTimeout(timeout timeout_ms) [flags=NAMED_ARGS] {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
@@ -2890,7 +2910,7 @@ zsock.setTimeout(30s);
     - @ref ZMQ_RCVTIMEO
     - @ref ZMQ_SNDTIMEO
  */
-nothing ZSocket::setTimeout(timeout timeout_ms) {
+nothing ZSocket::setTimeout(timeout timeout_ms) [flags=NAMED_ARGS] {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
@@ -2915,7 +2935,7 @@ router.setIdentity(RouterIdentity);
 port = router.bind("tcp://127.0.0.1:*");
     @endcode
 
-    @param id the identity string to set on the socket; the string will be converted to UTF-8 encoding if necessary; cannot be an empty string or a \c ZSOCKET-SETIDENTITY-ERROR exception will be thrown
+    @param identity the identity string to set on the socket; the string will be converted to UTF-8 encoding if necessary; cannot be an empty string or a \c ZSOCKET-SETIDENTITY-ERROR exception will be thrown
 
     @throw ENCODING-CONVERSION-ERROR this exception could be thrown if an encoding error is encountered when converting the given string to UTF-8
     @throw ZSOCKET-SETIDENTITY-ERROR if an error occurs setting the identity option on the socket
@@ -2932,13 +2952,13 @@ port = router.bind("tcp://127.0.0.1:*");
 
     @see @ref ZMQ_IDENTITY
  */
-nothing ZSocket::setIdentity(string id) {
+nothing ZSocket::setIdentity(string identity) [flags=NAMED_ARGS] {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
 
     // NOTE: cannot use zsock_setidentity() here as it will assert for all sockets except REQ, REP, DEALER, and ROUTER
-    zsock->setIdentity(*id, xsink);
+    zsock->setIdentity(*identity, xsink);
 }
 
 //! retrieves the socket identity string
@@ -3061,6 +3081,8 @@ nothing ZSocket::send(data[doc] val, ...) {
 
     // send all arguments
     for (size_t i = 0; i < size; ++i) {
+        if (i && !(i % 100) && qore_check_cancel(xsink, "ZSocket send argument conversion"))
+            return QoreValue();
         QoreValue arg = args->retrieveEntry(i);
 
         const char* ptr;
@@ -3134,7 +3156,7 @@ list<hash<ZmqPollInfo>> l(
 l = ZSocket::poll(l, 2s);
     @endcode
 
-    @param item list of @ref ZmqPollInfo hashes
+    @param items list of @ref ZmqPollInfo hashes
     @param timeout_ms the poll timeout period
 
     @return a list of sockets with events in the timeout period
@@ -3143,7 +3165,8 @@ l = ZSocket::poll(l, 2s);
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
 */
-static list<hash<ZmqPollInfo>> ZSocket::poll(list<hash<ZmqPollInfo>> items, timeout timeout_ms) {
+static list<hash<ZmqPollInfo>> ZSocket::poll(list<hash<ZmqPollInfo>> items, timeout timeout_ms)
+        [flags=NAMED_ARGS] {
     ReferenceHolder<QoreListNode> rv(new QoreListNode(hashdeclZmqPollInfo->getTypeInfo(false)), xsink);
 
     if (items->empty())
@@ -3154,6 +3177,8 @@ static list<hash<ZmqPollInfo>> ZSocket::poll(list<hash<ZmqPollInfo>> items, time
     zmq_pollitem_t pitem[items->size()];
     ConstListIterator li(items);
     while (li.next()) {
+        if (li.index() && !(li.index() % 100) && qore_check_cancel(xsink, "ZSocket poll preparation"))
+            return QoreValue();
         const QoreHashNode* h = li.getValue().get<const QoreHashNode>();
         QoreValue p = h->getKeyValue("socket");
         if (p.getType() != NT_OBJECT) {
@@ -3184,6 +3209,8 @@ static list<hash<ZmqPollInfo>> ZSocket::poll(list<hash<ZmqPollInfo>> items, time
         }
         if (rc) {
             for (unsigned i = 0; i < items->size(); ++i) {
+                if (i && !(i % 100) && qore_check_cancel(xsink, "ZSocket poll result conversion"))
+                    return QoreValue();
                 if (pitem[i].revents) {
                     ReferenceHolder<QoreHashNode> h(items->retrieveEntry(i).get<const QoreHashNode>()->copy(), xsink);
                     h->setKeyValue("events", pitem[i].revents, xsink);
@@ -3249,7 +3276,8 @@ static list<hash<ZmqPollInfo>> ZSocket::poll(list<hash<ZmqPollInfo>> items, time
 
     @throw ZSOCKET-PROXY-ERROR error executing the proxy call
 */
-static nothing ZSocket::proxy(ZSocket[QoreZSock] frontend, ZSocket[QoreZSock] backend, *ZSocket[QoreZSock] capture) {
+static nothing ZSocket::proxy(ZSocket[QoreZSock] frontend, ZSocket[QoreZSock] backend,
+        *ZSocket[QoreZSock] capture) [flags=NAMED_ARGS] {
     // enforce access from the correct thread
     if (frontend->check(xsink) || backend->check(xsink) || (capture && capture->check(xsink)))
         return QoreValue();
@@ -3299,7 +3327,8 @@ ctrl.send("TERMINATE");
 
     @see proxy()
 */
-static nothing ZSocket::proxySteerable(ZSocket[QoreZSock] frontend, ZSocket[QoreZSock] backend, *ZSocket[QoreZSock] capture, ZSocket[QoreZSock] control) {
+static nothing ZSocket::proxySteerable(ZSocket[QoreZSock] frontend, ZSocket[QoreZSock] backend,
+        *ZSocket[QoreZSock] capture, ZSocket[QoreZSock] control) [flags=NAMED_ARGS] {
     // enforce access from the correct thread
     if (frontend->check(xsink) || backend->check(xsink) || (capture && capture->check(xsink)) || control->check(xsink))
         return QoreValue();

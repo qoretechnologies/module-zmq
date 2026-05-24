@@ -71,7 +71,7 @@ qclass ZSocketRouter [arg=QoreZSock* zsock; ns=Qore::ZMQ; vparent=ZSocket; dom=N
 ZSocketRouter sock(ctx, "my-identity", "tcp://127.0.0.1:8001");
     @endcode
 
-    @param ctx the context for the socket
+    @param zcontext the context for the socket
     @param identity the identity value for the socket; a missing or empty value here results in the default identity being assigned
     @param endpoint the @ref zmqendpoints "endpoint" for the socket; the default action is bind
 
@@ -80,8 +80,8 @@ ZSocketRouter sock(ctx, "my-identity", "tcp://127.0.0.1:8001");
 
     @note It is recommended to use an identity with \c ROUTER sockets
 */
-ZSocketRouter::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx, *string identity, string endpoint) {
-    SimpleRefHolder<QoreRouterZSock> router(new QoreRouterZSock(**ctx, identity, endpoint->c_str(), xsink));
+ZSocketRouter::constructor(Qore::ZMQ::ZContext[QoreZContext] zcontext, *string identity, string endpoint) [flags=NAMED_ARGS] {
+    SimpleRefHolder<QoreRouterZSock> router(new QoreRouterZSock(**zcontext, identity, endpoint->c_str(), xsink));
     if (!*xsink)
         self->setPrivate(CID_ZSOCKETROUTER, router.release());
 }
@@ -96,14 +96,14 @@ router.setIdentity(RouterIdentity);
 port = router.bind("tcp://127.0.0.1:*");
     @endcode
 
-    @param ctx the context for the socket
+    @param zcontext the context for the socket
 
     @throw ZSOCKET-CONSTRUCTOR-ERROR this exception is thrown if there is any error creating the socket
 
     @note It is recommended to use an identity with \c ROUTER sockets
  */
-ZSocketRouter::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx) {
-    self->setPrivate(CID_ZSOCKETROUTER, new QoreRouterZSock(**ctx, nullptr, nullptr, xsink));
+ZSocketRouter::constructor(Qore::ZMQ::ZContext[QoreZContext] zcontext) [flags=NAMED_ARGS] {
+    self->setPrivate(CID_ZSOCKETROUTER, new QoreRouterZSock(**zcontext, nullptr, nullptr, xsink));
 }
 
 //! sets the \c ZMQ_ROUTER_MANDATORY option on the socket
@@ -119,7 +119,7 @@ router.setMandatory(True);
 
     @see @ref ZMQ_ROUTER_MANDATORY
 */
-ZSocketRouter::setMandatory(softbool mandatory) {
+ZSocketRouter::setMandatory(softbool mandatory) [flags=NAMED_ARGS] {
     int v = mandatory;
     if (zsock->setSocketOption(ZMQ_ROUTER_MANDATORY, &v, sizeof v))
         zmq_error(xsink, "ZSOCKET-SETMANDATORY-ERROR", "error setting mandatory %d in ZSocket::setMandatory()", mandatory ? 1 : 0);

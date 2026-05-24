@@ -119,7 +119,7 @@ string public = zmq_curve_public(priv);
 
     @throw ZMQ-CURVE-PUBLIC-ERROR an error was generated calling \c zmq_curve_public()
 */
-string zmq_curve_public(string secret) [flags=RET_VALUE_ONLY] {
+string zmq_curve_public(string secret) [flags=RET_VALUE_ONLY,NAMED_ARGS] {
     SimpleRefHolder<QoreStringNode> pub(new QoreStringNode);
     pub->reserve(40);
     int rc = zmq_curve_public((char*)pub->c_str(), (char*)secret->c_str());
@@ -145,7 +145,7 @@ string z85str = zmq_z85_encode(bin);
 
     @note Curve keys should be 32 bytes long
 */
-string zmq_z85_encode(binary data) [flags=RET_VALUE_ONLY] {
+string zmq_z85_encode(binary data) [flags=RET_VALUE_ONLY,NAMED_ARGS] {
     // ensure that the size is evenly divisible by 4
     size_t len = data->size() / 4 * 4;
     if (len != data->size()) {
@@ -180,7 +180,7 @@ binary key = zmq_z85_decode(z85_key);
 
     @see zmq_z85_encode()
 */
-binary zmq_z85_decode(string encoded) [flags=RET_VALUE_ONLY] {
+binary zmq_z85_decode(string encoded) [flags=RET_VALUE_ONLY,NAMED_ARGS] {
     // ensure that the size is evenly divisible by 5
     size_t len = encoded->size();
     if (len % 5 != 0) {
