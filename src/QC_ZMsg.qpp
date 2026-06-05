@@ -34,6 +34,8 @@
 int QoreZMsg::addFrames(const QoreListNode* l, ExceptionSink* xsink) {
     ConstListIterator i(l);
     while (i.next()) {
+        if (i.index() && !(i.index() % 100) && qore_check_cancel(xsink, "ZMsg frame conversion"))
+            return -1;
         if (addFrame(i.getValue(), i.index(), i.max(), xsink))
             return -1;
     }
@@ -134,7 +136,7 @@ ZMsg::constructor(...) {
 ZMsg msg(l);
     @endcode
 
-    @param l zero or more values to add to the message as frames; values are processed as follows:
+    @param frames zero or more values to add to the message as frames; values are processed as follows:
     - @ref Qore::ZMQ::ZFrame "ZFrame": the object is moved into the message, this call deletes the @ref Qore::ZMQ::ZFrame "ZFrame" object while processing
     - @ref Qore::ZMQ::ZMsg "ZMsg": the object is moved into the message, this call deletes the @ref Qore::ZMQ::ZMsg "ZMsg" object while processing
     - \c string: copies the string data to the message
@@ -142,9 +144,9 @@ ZMsg msg(l);
 
     @throw ZMSG-ERROR unsupported data type passed as an argument
  */
-ZMsg::constructor(list l) {
+ZMsg::constructor(list frames) [flags=NAMED_ARGS] {
     ReferenceHolder<QoreZMsg> msg(new QoreZMsg, xsink);
-    if (msg->addFrames(l, xsink))
+    if (msg->addFrames(frames, xsink))
         return;
     self->setPrivate(CID_ZMSG, msg.release());
 }
@@ -212,7 +214,7 @@ ZFrame ZMsg::encode() [flags=CONSTANT] {
     - Other properties may be defined based on the underlying security mechanism
     - only available if the underlying library supports it; check @ref Qore::ZMQ::HAVE_ZFRAME_META "HAVE_ZFRAME_META" before calling this method
  */
-*string ZMsg::meta(string property) [flags=CONSTANT] {
+*string ZMsg::meta(string property) [flags=CONSTANT,NAMED_ARGS] {
 #ifdef HAVE_ZFRAME_META
     if (msg->check(xsink))
         return QoreValue();
@@ -246,7 +248,7 @@ msg.add(frame);
     @throw ZMSG-APPEND-ERROR this exception is thrown if any error occurs adding the frame to the message
     @throw ZMSG-THREAD-ERROR this exception is thrown when the object is used in a thread other than the one that created it
 */
-nothing ZMsg::add(Qore::ZMQ::ZFrame[QoreZFrame] frame) {
+nothing ZMsg::add(Qore::ZMQ::ZFrame[QoreZFrame] frame) [flags=NAMED_ARGS] {
     if (msg->check(xsink))
         return QoreValue();
 
@@ -263,16 +265,16 @@ nothing ZMsg::add(Qore::ZMQ::ZFrame[QoreZFrame] frame) {
 msg.add(str);
     @endcode
 
-    @param str the string to add to the end of the message
+    @param text the string to add to the end of the message
 
     @throw ZMSG-ADD-ERROR this exception is thrown if any error occurs adding the frame to the message
     @throw ZMSG-THREAD-ERROR this exception is thrown when the object is used in a thread other than the one that created it
  */
-nothing ZMsg::add(string str) {
+nothing ZMsg::add(string text) [flags=NAMED_ARGS] {
     if (msg->check(xsink))
         return QoreValue();
 
-    int rc = zmsg_addmem(**msg, str->c_str(), str->size());
+    int rc = zmsg_addmem(**msg, text->c_str(), text->size());
     if (rc)
         zmq_error(xsink, "ZMSG-ADD-ERROR", "error in zmsg_addmem()");
 }
@@ -283,16 +285,16 @@ nothing ZMsg::add(string str) {
 msg.add(bin);
     @endcode
 
-    @param bin the binary object to add to the end of the message
+    @param data the binary object to add to the end of the message
 
     @throw ZMSG-ADD-ERROR this exception is thrown if any error occurs adding the frame to the message
     @throw ZMSG-THREAD-ERROR this exception is thrown when the object is used in a thread other than the one that created it
  */
-nothing ZMsg::add(binary bin) {
+nothing ZMsg::add(binary data) [flags=NAMED_ARGS] {
     if (msg->check(xsink))
         return QoreValue();
 
-    int rc = zmsg_addmem(**msg, bin->getPtr(), bin->size());
+    int rc = zmsg_addmem(**msg, data->getPtr(), data->size());
     if (rc)
         zmq_error(xsink, "ZMSG-ADD-ERROR", "error in zmsg_addmem()");
 }
@@ -308,7 +310,7 @@ msg.add(msg);
     @throw ZMSG-ADD-ERROR this exception is thrown if any error occurs adding the submessage to the message
     @throw ZMSG-THREAD-ERROR this exception is thrown when the object is used in a thread other than the one that created it
  */
-nothing ZMsg::add(Qore::ZMQ::ZMsg[QoreZMsg] submsg) {
+nothing ZMsg::add(Qore::ZMQ::ZMsg[QoreZMsg] submsg) [flags=NAMED_ARGS] {
     if (msg->check(xsink) || submsg->check(xsink))
         return QoreValue();
 
@@ -325,16 +327,16 @@ nothing ZMsg::add(Qore::ZMQ::ZMsg[QoreZMsg] submsg) {
 msg.push(str);
     @endcode
 
-    @param the string to add to the beginning of the message
+    @param text the string to add to the beginning of the message
 
     @throw ZMSG-PUSH-ERROR this exception is thrown if any error occurs adding the frame to the message
     @throw ZMSG-THREAD-ERROR this exception is thrown when the object is used in a thread other than the one that created it
  */
-nothing ZMsg::push(string str) {
+nothing ZMsg::push(string text) [flags=NAMED_ARGS] {
     if (msg->check(xsink))
         return QoreValue();
 
-    int rc = zmsg_pushmem(**msg, str->c_str(), str->size());
+    int rc = zmsg_pushmem(**msg, text->c_str(), text->size());
     if (rc)
         zmq_error(xsink, "ZMSG-ADD-ERROR", "error in zmsg_pushmem()");
 }
@@ -345,16 +347,16 @@ nothing ZMsg::push(string str) {
 msg.push(bin);
     @endcode
 
-    @param the string to add to the beginning of the message
+    @param data the binary data to add to the beginning of the message
 
     @throw ZMSG-PUSH-ERROR this exception is thrown if any error occurs adding the frame to the message
     @throw ZMSG-THREAD-ERROR this exception is thrown when the object is used in a thread other than the one that created it
  */
-nothing ZMsg::push(binary bin) {
+nothing ZMsg::push(binary data) [flags=NAMED_ARGS] {
     if (msg->check(xsink))
         return QoreValue();
 
-    int rc = zmsg_pushmem(**msg, bin->getPtr(), bin->size());
+    int rc = zmsg_pushmem(**msg, data->getPtr(), data->size());
     if (rc)
         zmq_error(xsink, "ZMSG-PUSH-ERROR", "error in zmsg_pushmem()");
 }
@@ -370,7 +372,7 @@ msg.push(frame);
     @throw ZMSG-PREPEND-ERROR this exception is thrown if any error occurs prepending the frame to the message
     @throw ZMSG-THREAD-ERROR this exception is thrown when the object is used in a thread other than the one that created it
 */
-nothing ZMsg::push(Qore::ZMQ::ZFrame[QoreZFrame] frame) {
+nothing ZMsg::push(Qore::ZMQ::ZFrame[QoreZFrame] frame) [flags=NAMED_ARGS] {
     if (msg->check(xsink))
         return QoreValue();
 
@@ -437,7 +439,7 @@ nothing ZMsg::push(Qore::ZMQ::ZFrame[QoreZFrame] frame) {
 
     @throw ZMSG-THREAD-ERROR this exception is thrown when the object is used in a thread other than the one that created it
 */
-*string ZMsg::popStr(*string encoding) {
+*string ZMsg::popStr(*string encoding) [flags=NAMED_ARGS] {
     if (msg->check(xsink))
         return QoreValue();
 
@@ -522,7 +524,7 @@ msg.setRoutingId(routing_id);
     @note
     - only available if the underlying library supports it; check @ref Qore::ZMQ::HAVE_ZMQ_DRAFT_APIS "HAVE_ZMQ_DRAFT_APIS" before calling this method
 */
-nothing ZMsg::setRoutingId(int routing_id) {
+nothing ZMsg::setRoutingId(int routing_id) [flags=NAMED_ARGS] {
     if (msg->check(xsink))
         return QoreValue();
 
@@ -596,17 +598,17 @@ int ZMsg::contentSize() [flags=CONSTANT] {
 bool b = msg.more();
     @endcode
 
-    @param msg2 the message to compare
+    @param other the message to compare
 
     @return @ref Qore::True "True" if two msgs have identical size and data
 
     @throw ZMSG-THREAD-ERROR this exception is thrown when the object is used in a thread other than the one that created it
 */
-bool ZMsg::eq(ZMsg[QoreZMsg] msg2) [flags=CONSTANT] {
+bool ZMsg::eq(ZMsg[QoreZMsg] other) [flags=CONSTANT,NAMED_ARGS] {
     if (msg->check(xsink))
         return QoreValue();
 
-    return zmsg_eq(**msg, ***msg2);
+    return zmsg_eq(**msg, ***other);
 }
 
 //! Sends a message to the zsys log sink (may be stdout, or system facility)
@@ -643,7 +645,7 @@ msg.save(f);
     versions of CZMQ. The file format is at present undocumented and liable
     to arbitrary change.
 */
-nothing ZMsg::save(Qore::File[File] file) {
+nothing ZMsg::save(Qore::File[File] file) [flags=NAMED_ARGS] {
     if (msg->check(xsink))
         return QoreValue();
 
@@ -684,7 +686,7 @@ radio.send(msg);
 
     @see getGroup()
 */
-nothing ZMsg::setGroup(string group) {
+nothing ZMsg::setGroup(string group) [flags=NAMED_ARGS] {
     if (msg->check(xsink))
         return QoreValue();
 

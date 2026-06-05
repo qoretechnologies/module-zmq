@@ -57,14 +57,14 @@ qclass ZSocketXSub [arg=QoreZSock* sock; ns=Qore::ZMQ; vparent=ZSocket; dom=NETW
 ZSocketXSub sock(ctx, "tcp://127.0.0.1:8001");
     @endcode
 
-    @param ctx the context for the socket
+    @param zcontext the context for the socket
     @param endpoint the @ref zmqendpoints "endpoint" for the socket; the default action is connect
 
     @throw ZSOCKET-CONSTRUCTOR-ERROR this exception is thrown if there is any error creating the socket
     @throw ZSOCKET-CONNECT-ERROR this exception is thrown if there is any error connecting the socket
  */
-ZSocketXSub::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx, string endpoint) {
-   self->setPrivate(CID_ZSOCKETXSUB, new QoreXSubZSock(**ctx, endpoint->c_str(), xsink));
+ZSocketXSub::constructor(Qore::ZMQ::ZContext[QoreZContext] zcontext, string endpoint) [flags=NAMED_ARGS] {
+   self->setPrivate(CID_ZSOCKETXSUB, new QoreXSubZSock(**zcontext, endpoint->c_str(), xsink));
 }
 
 //! constructs an unconnected \c XSUB zsocket
@@ -73,10 +73,10 @@ ZSocketXSub::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx, string endpoint)
 ZSocketXSub sock(ctx);
     @endcode
 
-    @param ctx the context for the socket
+    @param zcontext the context for the socket
 
     @throw ZSOCKET-CONSTRUCTOR-ERROR this exception is thrown if there is any error creating the socket
  */
-ZSocketXSub::constructor(Qore::ZMQ::ZContext[QoreZContext] ctx) {
-   self->setPrivate(CID_ZSOCKETXSUB, new QoreXSubZSock(**ctx, nullptr, xsink));
+ZSocketXSub::constructor(Qore::ZMQ::ZContext[QoreZContext] zcontext) [flags=NAMED_ARGS] {
+   self->setPrivate(CID_ZSOCKETXSUB, new QoreXSubZSock(**zcontext, nullptr, xsink));
 }

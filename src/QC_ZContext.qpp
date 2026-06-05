@@ -95,15 +95,15 @@ ZContext::copy() {
 ctx.setOption(ZMQ_IPV6, 1);
     @endcode
 
-    @param opt the option number; see @ref zcontext_options for possible values
+    @param option the option number; see @ref zcontext_options for possible values
     @param value the integer value to set
 
     @throw ZCONTEXT-SETOPTION-ERROR this exception is thrown if there is any error setting the option
  */
-nothing ZContext::setOption(int opt, int value) {
-   int rc = zmq_ctx_set(**ctx, opt, value);
+nothing ZContext::setOption(int option, int value) [flags=NAMED_ARGS] {
+   int rc = zmq_ctx_set(**ctx, option, value);
    if (rc)
-      zmq_error(xsink, "ZCONTEXT-SETOPTION-ERROR", "error in ZContext::setOption(%d, ...)", (int)opt);
+      zmq_error(xsink, "ZCONTEXT-SETOPTION-ERROR", "error in ZContext::setOption(%d, ...)", (int)option);
 }
 
 //! Retrieves the value of the given option on the context
@@ -112,16 +112,16 @@ nothing ZContext::setOption(int opt, int value) {
 int val = ctx.getOption(ZMQ_IPV6);
     @endcode
 
-    @param opt the option number; see @ref zcontext_options for possible values
+    @param option the option number; see @ref zcontext_options for possible values
 
     @return the integer value of the given option
 
     @throw ZCONTEXT-GETOPTION-ERROR this exception is thrown if there is any error setting the option
  */
-int ZContext::getOption(int opt) [flags=RET_VALUE_ONLY] {
-   int rc = zmq_ctx_get(**ctx, opt);
+int ZContext::getOption(int option) [flags=RET_VALUE_ONLY,NAMED_ARGS] {
+   int rc = zmq_ctx_get(**ctx, option);
    if (rc < 0) {
-      zmq_error(xsink, "ZCONTEXT-GETOPTION-ERROR", "error in ZContext::getOption(%d)", (int)opt);
+      zmq_error(xsink, "ZCONTEXT-GETOPTION-ERROR", "error in ZContext::getOption(%d)", (int)option);
       return QoreValue();
    }
    return rc;
