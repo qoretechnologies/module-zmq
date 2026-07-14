@@ -30,6 +30,7 @@
 
 #include "QC_ZContext.h"
 
+#include <atomic>
 #include <string>
 
 #ifndef DEBUG
@@ -99,6 +100,12 @@ public:
                 continue;
             return -1;
         }
+        // thread-safe sockets do not read ZMQ_RCVTIMEO back from the socket when receiving (getSocketOption() is
+        // not thread-safe), so the cached value has to track every update of the socket option here; otherwise
+        // receives on such sockets would always use the default timeout set at construction
+        if (option_name == ZMQ_RCVTIMEO && option_len == sizeof(int)) {
+            recv_timeout_ms.store(*static_cast<const int*>(option_value), std::memory_order_relaxed);
+        }
         return 0;
     }
 
@@ -120,9 +127,9 @@ public:
         return "ZSOCKET-THREAD-ERROR";
     }
 
-    //! returns the cached recv timeout (set once at construction, thread-safe to read)
+    //! returns the cached recv timeout (thread-safe to read)
     DLLLOCAL int getRecvTimeoutMs() const {
-        return recv_timeout_ms;
+        return recv_timeout_ms.load(std::memory_order_relaxed);
     }
 
     //! returns the socket type code
@@ -142,7 +149,7 @@ protected:
         zmq_setsockopt(sock, ZMQ_SNDTIMEO, &v, sizeof v);
         v = ZSOCK_TIMEOUT_MS;
         zmq_setsockopt(sock, ZMQ_RCVTIMEO, &v, sizeof v);
-        recv_timeout_ms = v;
+        recv_timeout_ms.store(v, std::memory_order_relaxed);
 #ifdef ZMQ_CONNECT_TIMEOUT
         v = ZSOCK_TIMEOUT_MS;
         zmq_setsockopt(sock, ZMQ_CONNECT_TIMEOUT, &v, sizeof v);
@@ -151,9 +158,9 @@ protected:
 
     void* sock = nullptr;
 
-    //! Cached recv timeout for thread-safe sockets (set once at construction, avoids
-    //! reading ZMQ_RCVTIMEO via getSocketOption which is not thread-safe)
-    int recv_timeout_ms = ZSOCK_TIMEOUT_MS;
+    //! Cached recv timeout for thread-safe sockets; updated by every ZMQ_RCVTIMEO update in setSocketOption(),
+    //! as reading ZMQ_RCVTIMEO back with getSocketOption() is not thread-safe
+    std::atomic<int> recv_timeout_ms{ZSOCK_TIMEOUT_MS};
 };
 
 class QoreZSockBind : public QoreZSock {

@@ -57,6 +57,7 @@ class ZmqClientServerTest inherits QUnit::Test {
         addTestCase("corner - bidirectional multi-frame", \bidirectionalMultiFrameTest());
         addTestCase("corner - ZMsg send", \zmsgSendTest());
         addTestCase("server - multiple clients routing", \multipleClientsRoutingTest());
+        addTestCase("receive timeout is honored", \recvTimeoutTest());
 
         set_return_value(main());
     }
@@ -800,5 +801,35 @@ class ZmqClientServerTest inherits QUnit::Test {
         if (m_options.verbose > 2) {
             printf("Multiple clients routing test passed\n");
         }
+    }
+
+    #! CLIENT and SERVER sockets are thread-safe, so they cannot read ZMQ_RCVTIMEO back from the socket when
+    #! receiving and use a cached value instead; the cache must track every update of the socket option, or every
+    #! receive silently uses the default timeout set when the socket was created (2 minutes)
+    recvTimeoutTest() {
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        string endpoint = server.endpoint();
+        ZSocketClient client(zctx, endpoint);
+
+        # no peer ever sends anything, so each receive below can only end in a timeout
+        foreach int timeout_ms in ((250, 750)) {
+            client.setTimeout(timeout_ms);
+            date start = now_us();
+            assertThrows("ZSOCKET-TIMEOUT-ERROR", sub () { client.recvMsg(); },
+                NOTHING, sprintf("recvMsg() times out with a %d ms timeout", timeout_ms));
+            int elapsed_ms = (now_us() - start).durationMilliseconds();
+            # the receive must return on the timeout set last, and not on the default set at construction
+            assertTrue(elapsed_ms < timeout_ms + 5000,
+                sprintf("recvMsg() with a %d ms timeout returned after %d ms", timeout_ms, elapsed_ms));
+        }
+
+        # the same applies to the server socket and to setRecvTimeout()
+        server.setRecvTimeout(250ms);
+        date start = now_us();
+        assertThrows("ZSOCKET-TIMEOUT-ERROR", sub () { server.recvMsg(); },
+            NOTHING, "recvMsg() times out with the receive timeout set");
+        int elapsed_ms = (now_us() - start).durationMilliseconds();
+        assertTrue(elapsed_ms < 5250,
+            sprintf("server recvMsg() honors setRecvTimeout(): returned after %d ms", elapsed_ms));
     }
 }
