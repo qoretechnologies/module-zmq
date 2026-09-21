@@ -42,7 +42,12 @@ int QoreZMsg::addFrames(const QoreListNode* l, ExceptionSink* xsink) {
     return 0;
 }
 
-int QoreZMsg::addFrame(const QoreValue v, int i, int max, ExceptionSink* xsink) {
+int QoreZMsg::addFrame(const QoreValue v_arg, int i, int max, ExceptionSink* xsink) {
+    // addFrames() walks the list with a ConstListIterator, which yields what the list holds:
+    // an element assigned with the weak reference operator ":=" or the opaque reference
+    // operator "@=" is stored as the reference itself, so resolve it before dispatching or a
+    // perfectly good frame is reported as a type that cannot be added to a message.
+    const QoreValue v = v_arg.resolveIndirect();
     switch (v.getType()) {
         case NT_OBJECT: {
             const QoreObject* obj = v.get<const QoreObject>();

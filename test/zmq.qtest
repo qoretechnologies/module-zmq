@@ -3,6 +3,10 @@
 
 %modern
 
+# ZMsg frame conversion has to resolve these; see indirectReferencesTest()
+%allow-weak-references
+%allow-opaque-references
+
 %requires QUnit
 %requires Util
 %requires zmq
@@ -27,6 +31,7 @@ class ZmqTest inherits QUnit::Test {
 
     constructor() : QUnit::Test("ZmqTest", "1.0") {
         addTestCase("basic", \basicTest());
+        addTestCase("indirect references", \indirectReferencesTest());
         addTestCase("named arguments", \namedArgumentTest());
         addTestCase("zcontext", \zContextTest());
         addTestCase("zsocket smoke", \zSocketSmokeTest());
@@ -55,6 +60,31 @@ class ZmqTest inherits QUnit::Test {
         #addTestCase("sandbox network", \sandboxNetworkTest());
 
         set_return_value(main());
+    }
+
+    #! A frame list element holding a weak or opaque reference must be added as its target
+    /** QoreZMsg::addFrames() walks the list with a ConstListIterator, which yields what the list
+        holds: an element assigned with ":=" or "@=" is stored as the reference itself.  Without
+        QoreValue::resolveIndirect() in addFrame() the element reaches the default case and the
+        message is rejected with ZMSG-ERROR "don't know how to add type \"weak reference\"", even
+        though its target is an ordinary ZFrame.
+    */
+    indirectReferencesTest() {
+        ZFrame f1(text: "one");
+        ZFrame f2(text: "two");
+
+        list<auto> weak = ();
+        weak[0] := f1;
+        weak[1] := f2;
+        ZMsg weak_msg(weak);
+        assertEq("one", weak_msg.popStr(), "the first weak frame reference is added as its target");
+        assertEq("two", weak_msg.popStr(), "the second weak frame reference is added as its target");
+
+        ZFrame g1(text: "three");
+        list<auto> opaque = ();
+        opaque[0] @= g1;
+        ZMsg opaque_msg(opaque);
+        assertEq("three", opaque_msg.popStr(), "an opaque frame reference is added as its target");
     }
 
     basicTest() {
