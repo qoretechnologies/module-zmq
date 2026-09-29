@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.21)
 
 # Set macOS deployment target
 if(APPLE)
@@ -21,6 +21,9 @@ set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 # OFF: Force building from source
 set(USE_SYSTEM_ZMQ "AUTO" CACHE STRING "Use system zmq/czmq: AUTO, ON, or OFF")
 set_property(CACHE USE_SYSTEM_ZMQ PROPERTY STRINGS "AUTO" "ON" "OFF")
+if(NOT USE_SYSTEM_ZMQ MATCHES "^(AUTO|ON|OFF)$")
+    message(FATAL_ERROR "USE_SYSTEM_ZMQ must be AUTO, ON, or OFF")
+endif()
 
 find_package(Qore 0.9 REQUIRED)
 
@@ -47,6 +50,12 @@ endif ()
 set(USE_SYSTEM_ZMQ_RESOLVED OFF)
 
 if (USE_SYSTEM_ZMQ STREQUAL "ON" OR USE_SYSTEM_ZMQ STREQUAL "AUTO")
+    include(CMakePushCheckState)
+    cmake_push_check_state(RESET)
+    # Check again when a build directory is reconfigured with different libraries.
+    unset(ZMQ_COMPILES_WITH_DRAFT CACHE)
+    unset(ZMQ_DRAFT_API_WORKS CACHE)
+    unset(HAVE_CZMQ_DRAFT_API CACHE)
     # Try to find system zmq/czmq
     find_package(ZMQ QUIET)
 
@@ -152,16 +161,36 @@ if (USE_SYSTEM_ZMQ STREQUAL "ON" OR USE_SYSTEM_ZMQ STREQUAL "AUTO")
             " ZMQ_DRAFT_API_WORKS)
         endif()
 
-        if (ZMQ_DRAFT_API_WORKS)
-            message(STATUS "System ZMQ has draft API support")
+        # CZMQ must implement group handling, not merely expose its declarations.
+        if(ZMQ_DRAFT_API_WORKS)
+            set(CMAKE_REQUIRED_INCLUDES ${CZMQ_INCLUDE_DIRS} ${ZMQ_INCLUDE_DIRS})
+            set(CMAKE_REQUIRED_LIBRARIES ${CZMQ_LIBRARIES} ${ZMQ_LIBRARIES})
+            set(CMAKE_REQUIRED_DEFINITIONS -DZMQ_BUILD_DRAFT_API=1 -DCZMQ_BUILD_DRAFT_API=1)
+            check_c_source_runs("
+            #include <czmq.h>
+            #include <string.h>
+            int main() {
+                zframe_t* frame = zframe_new(\"test\", 4);
+                if (!frame) return 1;
+                int rc = zframe_set_group(frame, \"group\");
+                const char* group = rc ? 0 : zframe_group(frame);
+                int ok = group && !strcmp(group, \"group\");
+                zframe_destroy(&frame);
+                return ok ? 0 : 1;
+            }
+            " HAVE_CZMQ_DRAFT_API)
+        endif()
+
+        if (ZMQ_DRAFT_API_WORKS AND HAVE_CZMQ_DRAFT_API)
+            message(STATUS "System ZMQ/CZMQ have working draft APIs")
             set(USE_SYSTEM_ZMQ_RESOLVED ON)
         else()
             if (USE_SYSTEM_ZMQ STREQUAL "ON")
-                message(FATAL_ERROR "System ZMQ does not have draft API support. "
+                message(FATAL_ERROR "System ZMQ/CZMQ do not have complete draft API support. "
                     "Please install libzmq 4.2+ built with draft API enabled "
                     "(--enable-drafts or -DENABLE_DRAFTS=ON), or use -DUSE_SYSTEM_ZMQ=AUTO or OFF.")
             else()
-                message(STATUS "System ZMQ does not have draft API support, will build from source")
+                message(STATUS "System ZMQ/CZMQ do not have complete draft API support, will build from source")
             endif()
         endif()
     else()
@@ -172,6 +201,7 @@ if (USE_SYSTEM_ZMQ STREQUAL "ON" OR USE_SYSTEM_ZMQ STREQUAL "AUTO")
             message(STATUS "System ZMQ/CZMQ not found, will build from source")
         endif()
     endif()
+    cmake_pop_check_state()
 endif()
 
 if (USE_SYSTEM_ZMQ_RESOLVED)
@@ -179,123 +209,86 @@ if (USE_SYSTEM_ZMQ_RESOLVED)
     include_directories(${CZMQ_INCLUDE_DIRS})
     include_directories(${ZMQ_INCLUDE_DIRS})
 
-    # Check for CZMQ draft API support
-    set(CMAKE_REQUIRED_INCLUDES ${CZMQ_INCLUDE_DIRS})
-    set(CMAKE_REQUIRED_LIBRARIES ${CZMQ_LIBRARIES} ${ZMQ_LIBRARIES})
-    set(CMAKE_REQUIRED_DEFINITIONS -DZMQ_BUILD_DRAFT_API=1)
-    include(CheckCXXSymbolExists)
-    check_cxx_symbol_exists(zmsg_set_group "czmq.h" HAVE_CZMQ_DRAFT_API)
-    if (HAVE_CZMQ_DRAFT_API)
-        add_definitions(-DHAVE_CZMQ_DRAFT_API=1)
-    endif()
+    add_compile_definitions(ZMQ_BUILD_DRAFT_API=1 CZMQ_BUILD_DRAFT_API=1 HAVE_CZMQ_DRAFT_API=1)
 
-    # Enable draft API in compilation
-    add_definitions(-DZMQ_BUILD_DRAFT_API=1)
-
-    set(ZMQ_LINK_LIBRARIES ${ZMQ_LIBRARIES} ${CZMQ_LIBRARIES})
+    foreach(feature HAVE_ZFRAME_META HAVE_ZMQ_PROXY_STEERABLE HAVE_ZMSG_ENCODE_TO_ZFRAME HAVE_ZMSG_ENCODE_TO_BUFFER)
+        if(${feature})
+            add_compile_definitions(${feature}=1)
+        endif()
+    endforeach()
+    set(ZMQ_LINK_LIBRARIES ${CZMQ_LIBRARIES} ${ZMQ_LIBRARIES})
 else()
-    # Build libzmq and czmq from source with draft API enabled
-    include(FetchContent)
+    # Keep dependency options in a function scope and exclude their install rules.
+    function(qore_build_private_zmq)
+        include(FetchContent)
+        if(POLICY CMP0169)
+            cmake_policy(SET CMP0169 OLD)
+        endif()
+        set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+        set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+        set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+        if(UNIX AND NOT APPLE)
+            add_compile_definitions(_GNU_SOURCE)
+        endif()
+        set(CMAKE_C_VISIBILITY_PRESET hidden)
+        set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+        set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
+        set(ENABLE_DRAFTS ON)
+        set(ENABLE_CURVE ON)
+        set(WITH_LIBSODIUM ON)
+        set(WITH_LIBSODIUM_STATIC OFF)
+        set(ENABLE_LIBSODIUM_RANDOMBYTES_CLOSE OFF)
+        set(BUILD_TESTS OFF)
+        set(BUILD_SHARED OFF)
+        set(BUILD_STATIC ON)
+        set(WITH_DOC OFF)
+        set(WITH_DOCS OFF)
+        set(WITH_PERF_TOOL OFF)
+        set(ENABLE_NO_EXPORT ON)
+        # CZMQ object files do not inherit libzmq-static's interface definitions.
+        # Without this, RADIO/DISH group methods compile as ENOTSUP stubs.
+        add_compile_definitions(ZMQ_BUILD_DRAFT_API=1)
 
-    message(STATUS "Building libzmq and czmq from source with draft API enabled")
+        FetchContent_Declare(libzmq
+            GIT_REPOSITORY https://github.com/zeromq/libzmq.git
+            GIT_TAG v4.3.5
+            GIT_SHALLOW TRUE)
+        FetchContent_GetProperties(libzmq)
+        if(NOT libzmq_POPULATED)
+            FetchContent_Populate(libzmq)
+        endif()
+        add_subdirectory("${libzmq_SOURCE_DIR}" "${libzmq_BINARY_DIR}" EXCLUDE_FROM_ALL)
 
-    # Fetch libzmq
-    FetchContent_Declare(
-        libzmq
-        GIT_REPOSITORY https://github.com/zeromq/libzmq.git
-        GIT_TAG        v4.3.5
-        GIT_SHALLOW    TRUE
-        PATCH_COMMAND  ${CMAKE_COMMAND} -Dlibzmq_src_dir=<SOURCE_DIR>
-                       -P ${CMAKE_SOURCE_DIR}/cmake/patch-libzmq-cmake-min.cmake
-    )
+        # Pin the development revision required by the existing macOS build.
+        FetchContent_Declare(czmq
+            GIT_REPOSITORY https://github.com/zeromq/czmq.git
+            GIT_TAG b669c7eb60cb8f587071ac6ece7cd68d30ac4017)
+        FetchContent_GetProperties(czmq)
+        if(NOT czmq_POPULATED)
+            FetchContent_Populate(czmq)
+        endif()
+        set(CZMQ_BUILD_SHARED OFF)
+        set(CZMQ_BUILD_STATIC ON)
+        set(CZMQ_WITH_DOCS OFF)
+        if(APPLE)
+            set(CZMQ_WITH_UUID OFF)
+            set(uuid_FOUND FALSE)
+        endif()
+        set(libzmq_FOUND TRUE)
+        set(libzmq_INCLUDE_DIRS "${libzmq_SOURCE_DIR}/include;${libzmq_BINARY_DIR}")
+        set(libzmq_LIBRARIES libzmq-static)
+        add_subdirectory("${czmq_SOURCE_DIR}" "${czmq_BINARY_DIR}" EXCLUDE_FROM_ALL)
+        # CZMQ public headers explicitly export symbols even for Unix static builds.
+        # Hide archive symbols at the final module link as well as during compilation.
+        set(QORE_PRIVATE_ZMQ_INCLUDES "${libzmq_SOURCE_DIR}/include;${libzmq_BINARY_DIR};${czmq_SOURCE_DIR}/include;${czmq_BINARY_DIR}" PARENT_SCOPE)
+        set(ZMQ_LINK_LIBRARIES czmq-static libzmq-static PARENT_SCOPE)
+    endfunction()
+    qore_build_private_zmq()
+    include_directories(${QORE_PRIVATE_ZMQ_INCLUDES})
+    add_compile_definitions(ZMQ_BUILD_DRAFT_API=1 CZMQ_BUILD_DRAFT_API=1
+        HAVE_CZMQ_DRAFT_API=1 HAVE_ZMSG_ENCODE_TO_ZFRAME=1 HAVE_ZFRAME_META=1
+        HAVE_ZMQ_PROXY_STEERABLE=1)
 
-    # Configure libzmq build options
-    set(ENABLE_DRAFTS ON CACHE BOOL "Enable draft APIs" FORCE)
-    set(ENABLE_CURVE ON CACHE BOOL "Enable CURVE security" FORCE)
-    set(WITH_LIBSODIUM ON CACHE BOOL "Use libsodium for CURVE" FORCE)
-    set(BUILD_TESTS OFF CACHE BOOL "Disable libzmq tests" FORCE)
-    set(BUILD_SHARED OFF CACHE BOOL "Build static library" FORCE)
-    set(BUILD_STATIC ON CACHE BOOL "Build static library" FORCE)
-    set(WITH_DOCS OFF CACHE BOOL "Disable docs" FORCE)
-    set(WITH_PERF_TOOL OFF CACHE BOOL "Disable perf tool" FORCE)
-
-    FetchContent_MakeAvailable(libzmq)
-
-    # Fetch czmq - using master for macOS compatibility
-    FetchContent_Declare(
-        czmq
-        GIT_REPOSITORY https://github.com/zeromq/czmq.git
-        GIT_TAG        master
-    )
-
-    # Configure czmq build options
-    set(CZMQ_BUILD_SHARED OFF CACHE BOOL "Build shared library" FORCE)
-    set(CZMQ_BUILD_STATIC ON CACHE BOOL "Build static library" FORCE)
-    set(ENABLE_DRAFTS ON CACHE BOOL "Enable draft APIs" FORCE)
-    set(CZMQ_WITH_DOCS OFF CACHE BOOL "Disable docs" FORCE)
-
-    # On macOS, prevent czmq from finding Kernel.framework's uuid.h
-    # by disabling UUID support (macOS has built-in UUID via CFUUIDCreate)
-    if(APPLE)
-        set(CZMQ_WITH_UUID OFF CACHE BOOL "Disable uuid dependency" FORCE)
-        set(uuid_FOUND FALSE CACHE BOOL "uuid not found" FORCE)
-    endif()
-
-    # Ensure ZMQ draft API is enabled for czmq compilation
-    add_compile_definitions(ZMQ_BUILD_DRAFT_API=1)
-
-    # On Linux, enable GNU extensions for pthread_setname_np
-    if(NOT APPLE)
-        add_compile_definitions(_GNU_SOURCE)
-    endif()
-
-    # Tell czmq to use our FetchContent-built libzmq instead of finding the system one
-    set(libzmq_FOUND TRUE)
-    set(libzmq_INCLUDE_DIRS "${libzmq_SOURCE_DIR}/include;${libzmq_BINARY_DIR}")
-    set(libzmq_LIBRARIES libzmq-static)
-
-    # Use FetchContent_Populate + add_subdirectory with EXCLUDE_FROM_ALL
-    # This prevents czmq from installing its executables which we don't build
-    FetchContent_GetProperties(czmq)
-    if(NOT czmq_POPULATED)
-        FetchContent_Populate(czmq)
-        add_subdirectory(${czmq_SOURCE_DIR} ${czmq_BINARY_DIR} EXCLUDE_FROM_ALL)
-    endif()
-
-    # Set include directories for fetched libraries
-    include_directories(${libzmq_SOURCE_DIR}/include)
-    include_directories(${czmq_SOURCE_DIR}/include)
-    include_directories(${libzmq_BINARY_DIR})
-    include_directories(${czmq_BINARY_DIR})
-
-    # CZMQ draft API is always available when building from source
-    add_definitions(-DHAVE_CZMQ_DRAFT_API=1)
-
-    # Modern czmq uses zframe-based encode/decode API
-    add_definitions(-DHAVE_ZMSG_ENCODE_TO_ZFRAME=1)
-
-    # Check if zframe_meta is available (might not be in all czmq versions)
-    # Note: We check header declaration since linking against static libs during cmake check is complex
-    include(CheckCXXSourceCompiles)
-    set(CMAKE_REQUIRED_INCLUDES ${czmq_SOURCE_DIR}/include ${libzmq_SOURCE_DIR}/include ${libzmq_BINARY_DIR})
-    set(CMAKE_REQUIRED_DEFINITIONS -DZMQ_BUILD_DRAFT_API=1)
-    check_cxx_source_compiles("
-    #include <czmq.h>
-    // Check that zframe_meta is declared in the header
-    typedef const char* (*zframe_meta_func_t)(zframe_t*, const char*);
-    int main() {
-        zframe_meta_func_t fn = &zframe_meta;
-        (void)fn;
-        return 0;
-    }
-    " HAVE_ZFRAME_META_FUNC)
-    if (HAVE_ZFRAME_META_FUNC)
-        add_definitions(-DHAVE_ZFRAME_META=1)
-    endif()
-
-    set(ZMQ_LINK_LIBRARIES czmq-static libzmq-static)
-
-    message(STATUS "Building ZMQ from source with draft API enabled")
 endif()
 
 # Enable draft API definitions
@@ -351,6 +344,9 @@ include_directories(BEFORE ${CMAKE_SOURCE_DIR}/src)
 target_include_directories(${module_name} PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>)
 
 target_link_libraries(${module_name} ${ZMQ_LINK_LIBRARIES})
+if(NOT USE_SYSTEM_ZMQ_RESOLVED AND UNIX AND NOT APPLE)
+    target_link_options(${module_name} PRIVATE "LINKER:--exclude-libs,libzmq.a:libczmq.a")
+endif()
 
 set(MODULE_DOX_INPUT ${CMAKE_CURRENT_BINARY_DIR}/mainpage.dox ${QPP_DOX})
 string(REPLACE ";" " " MODULE_DOX_INPUT "${MODULE_DOX_INPUT}")

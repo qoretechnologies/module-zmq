@@ -8,3 +8,16 @@ CTestTestfile.cmake
 
 *~
 build/
+
+# Debian package builds and orig components
+obj-*/
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/files
+debian/*.debhelper.log
+debian/*.substvars
+debian/qore-zmq-module/
+debian/qore-zmq-module-doc/
+debian/tmp/
+/libzmq/
+/czmq/

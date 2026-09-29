@@ -1,8 +1,10 @@
 #!/usr/bin/env qore
 # -*- mode: qore; indent-tabs-mode: nil -*-
+# Copyright (C) 2026 Qore Technologies, s.r.o.
 
 %modern
 
+%prepend-module-path ${SCRIPT_DIR}/../build
 %requires QUnit
 %requires Util
 %requires zmq

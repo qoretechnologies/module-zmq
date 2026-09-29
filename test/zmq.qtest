@@ -1,5 +1,6 @@
 #!/usr/bin/env qore
 # -*- mode: qore; indent-tabs-mode: nil -*-
+# Copyright (C) 2026 Qore Technologies, s.r.o.
 
 %modern
 
@@ -7,6 +8,7 @@
 %allow-weak-references
 %allow-opaque-references
 
+%prepend-module-path ${SCRIPT_DIR}/../build
 %requires QUnit
 %requires Util
 %requires zmq
@@ -55,9 +57,8 @@ class ZmqTest inherits QUnit::Test {
         if (HAVE_ZMQ_PROXY_STEERABLE) {
             addTestCase("steerable proxy", \steerableProxyTest());
         }
-        # Temporarily disabled - these tests hang in some environments
-        #addTestCase("sandbox interrupt", \sandboxInterruptTest());
-        #addTestCase("sandbox network", \sandboxNetworkTest());
+        addTestCase("sandbox interrupt", \sandboxInterruptTest());
+        addTestCase("sandbox network", \sandboxNetworkTest());
 
         set_return_value(main());
     }

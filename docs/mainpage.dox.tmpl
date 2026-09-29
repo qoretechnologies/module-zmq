@@ -292,4 +292,14 @@ server.send(response);
 
     @subsection zmq_1_0 zmq Module Version 1.0
     - initial public release
+
+    @section zmqpackaging Debian and Ubuntu packages
+
+    The packages ship native APIs, compiler metadata, documentation and debug symbols.
+    Pinned private libzmq/CZMQ sources retain draft sockets and CURVE security, with
+    system cryptographic dependencies. Dependency installation and symbols are isolated.
+    Offline builds do not modify downloaded sources; system-library AUTO detection falls
+    back cleanly when headers or draft APIs are unavailable.
+
+    Native implementation files are LGPL 2.1 or later; support files retain their MIT grant.
 */

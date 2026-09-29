@@ -1,0 +1,10 @@
+qore-zmq-module (1.2.0~git20260928.1+ds-0qore1~ubuntu26.04) resolute; urgency=medium
+
+  * Package native messaging APIs, compiler metadata, docs and debug symbols.
+  * Include pinned offline libzmq/CZMQ sources with draft APIs and CURVE.
+  * Keep private dependency installs and symbols isolated; use system crypto.
+  * Fix optional system detection and repeat configuration without source edits.
+  * Align native license metadata with LGPL source notices.
+  * Qualify build profiles, installed tests, fresh compilation and lifecycle.
+
+ -- David Nichols <david@qore.org>  Tue, 29 Sep 2026 05:30:00 +0000

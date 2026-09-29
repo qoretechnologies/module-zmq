@@ -69,8 +69,8 @@ extern "C" DLLEXPORT void zmq_qore_module_desc(QoreModuleInfo& mod_info) {
     mod_info.init = zmq_module_init;
     mod_info.ns_init = zmq_module_ns_init;
     mod_info.del = zmq_module_delete;
-    mod_info.license = QL_MIT;
-    mod_info.license_str = "MIT";
+    mod_info.license = QL_LGPL;
+    mod_info.license_str = "LGPL-2.1-or-later";
 }
 
 DLLLOCAL void init_zmq_functions(QoreNamespace& ns);

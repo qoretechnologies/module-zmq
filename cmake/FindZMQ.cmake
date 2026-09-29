@@ -8,12 +8,6 @@
 # ZMQ_DEFINITIONS - Compiler switches required for using ZMQ
 
 find_path(ZMQ_INCLUDE_DIR zmq.h HINTS $ENV{ZMQ_DIR}/include)
-if (ZMQ_INCLUDE_DIR)
-    message(STATUS "Found ZMQ includes: ${ZMQ_INCLUDE_DIR}")
-else()
-    message(FATAL_ERROR "ZMQ includes not found (set ZMQ_DIR to the ZMQ installation location and try again)")
-endif(ZMQ_INCLUDE_DIR)
-
 # Prefer shared libraries to avoid static transitive dependency issues
 set(_zmq_saved_suffixes ${CMAKE_FIND_LIBRARY_SUFFIXES})
 set(CMAKE_FIND_LIBRARY_SUFFIXES ${CMAKE_SHARED_LIBRARY_SUFFIX})
@@ -28,11 +22,6 @@ unset(_zmq_saved_suffixes)
 set(ZMQ_INCLUDE_DIRS ${ZMQ_INCLUDE_DIR})
 set(ZMQ_LIBRARIES ${ZMQ_LIBRARY})
 
-include(FindPackageHandleStandardArgs)
-# handle the QUIETLY and REQUIRED arguments and set ZMQ_FOUND to TRUE
-# if all listed variables are TRUE
-find_package_handle_standard_args(ZMQ DEFAULT_MSG ZMQ_LIBRARY ZMQ_INCLUDE_DIR)
-
 # - Try to find CZMQ
 # Once done this will define
 # CZMQ_FOUND - System has CZMQ
@@ -46,20 +35,26 @@ include(CheckFunctionExists)
 include(CheckCXXSourceCompiles)
 
 find_path(CZMQ_INCLUDE_DIR czmq.h HINTS $ENV{ZMQ_DIR}/include)
-if (CZMQ_INCLUDE_DIR)
-  message(STATUS "Found CZMQ includes: ${CZMQ_INCLUDE_DIR}")
-else()
-  message(FATAL_ERROR "CZMQ includes not found (set CZMQ_DIR to the CZMQ installation location and try again)")
-endif(CZMQ_INCLUDE_DIR)
-
 find_library(CZMQ_LIBRARY NAMES czmq HINTS $ENV{ZMQ_DIR}/lib)
 
 set(CZMQ_INCLUDE_DIRS ${CZMQ_INCLUDE_DIR})
 set(CZMQ_LIBRARIES ${CZMQ_LIBRARY})
 
+include(FindPackageHandleStandardArgs)
+find_package_handle_standard_args(ZMQ DEFAULT_MSG ZMQ_LIBRARY ZMQ_INCLUDE_DIR CZMQ_LIBRARY CZMQ_INCLUDE_DIR)
+set(CZMQ_FOUND ${ZMQ_FOUND})
+if(NOT ZMQ_FOUND)
+    return()
+endif()
+
+include(CMakePushCheckState)
+cmake_push_check_state(RESET)
+foreach(feature HAVE_ZFRAME_META HAVE_ZMQ_PROXY_STEERABLE HAVE_ZMSG_ENCODE_TO_ZFRAME HAVE_ZMSG_ENCODE_TO_BUFFER)
+    unset(${feature} CACHE)
+endforeach()
 set(CMAKE_REQUIRED_INCLUDES ${CZMQ_INCLUDE_DIR} ${ZMQ_INCLUDE_DIRS})
 set(CMAKE_REQUIRED_LIBRARIES ${CZMQ_LIBRARY} ${ZMQ_LIBRARIES})
-set(CMAKE_REQUIRED_DEFINITIONS -DZMQ_BUILD_DRAFT_API=1)
+set(CMAKE_REQUIRED_DEFINITIONS -DZMQ_BUILD_DRAFT_API=1 -DCZMQ_BUILD_DRAFT_API=1)
 
 # If ZMQ is a static library, we need its transitive dependencies for link checks
 if(ZMQ_LIBRARY MATCHES "\\.a$")
@@ -94,9 +89,6 @@ int main() {
     return 0;
 }
 " HAVE_ZFRAME_META)
-if(HAVE_ZFRAME_META)
-    add_definitions(-DHAVE_ZFRAME_META)
-endif(HAVE_ZFRAME_META)
 
 check_cxx_source_compiles("
 #include <zmq.h>
@@ -114,9 +106,6 @@ int main() {
     return 0;
 }
 " HAVE_ZMQ_PROXY_STEERABLE)
-if(HAVE_ZMQ_PROXY_STEERABLE)
-    add_definitions(-DHAVE_ZMQ_PROXY_STEERABLE)
-endif(HAVE_ZMQ_PROXY_STEERABLE)
 
 # check signature of zmsg_encode()
 # Modern czmq (4.x) returns zframe_t*, older versions use buffer output parameter
@@ -132,9 +121,7 @@ int main() {
 }
 " HAVE_ZMSG_ENCODE_TO_ZFRAME)
 
-if(HAVE_ZMSG_ENCODE_TO_ZFRAME)
-    add_definitions(-DHAVE_ZMSG_ENCODE_TO_ZFRAME)
-else(HAVE_ZMSG_ENCODE_TO_ZFRAME)
+if(NOT HAVE_ZMSG_ENCODE_TO_ZFRAME)
     check_cxx_source_compiles("
 #define ZMQ_BUILD_DRAFT_API 1
 #include <czmq.h>
@@ -149,14 +136,9 @@ int main() {
 }
 " HAVE_ZMSG_ENCODE_TO_BUFFER)
 
-    if(HAVE_ZMSG_ENCODE_TO_BUFFER)
-        add_definitions(-DHAVE_ZMSG_ENCODE_TO_BUFFER)
-    else(HAVE_ZMSG_ENCODE_TO_BUFFER)
-        message(FATAL_ERROR "The found CZMQ library does not support zmsg_encode() function")
-    endif(HAVE_ZMSG_ENCODE_TO_BUFFER)
-endif(HAVE_ZMSG_ENCODE_TO_ZFRAME)
-
-include(FindPackageHandleStandardArgs)
-# handle the QUIETLY and REQUIRED arguments and set CZMQ_FOUND to TRUE
-# if all listed variables are TRUE
-find_package_handle_standard_args(CZMQ DEFAULT_MSG CZMQ_LIBRARY CZMQ_INCLUDE_DIR)
+    if(NOT HAVE_ZMSG_ENCODE_TO_BUFFER)
+        set(ZMQ_FOUND FALSE)
+        set(CZMQ_FOUND FALSE)
+    endif()
+endif()
+cmake_pop_check_state()

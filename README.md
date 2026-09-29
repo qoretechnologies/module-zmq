@@ -143,4 +143,8 @@ Documentation will be generated in the `docs/` directory.
 
 ## License
 
-LGPL 2.1 - see LICENSE file for details.
+Native implementation: LGPL 2.1 or later; see COPYING.LGPL. Support files retain
+the MIT license in LICENSE. Private ZeroMQ/CZMQ sources retain their own licenses.
+
+Debian/Ubuntu source-package instructions and qualification scope are in
+`debian/README.source`. Package builds preserve the full draft socket API.

@@ -1,0 +1,23 @@
+#!/bin/sh
+# Copyright (C) 2026 David Nichols
+# SPDX-License-Identifier: MIT
+set -eu
+unset QORE_MODULE_DIR QORE_MODULE_DIR_ONLY QORE_INCLUDE_DIR LD_LIBRARY_PATH LD_PRELOAD
+cd "$AUTOPKGTEST_TMP"
+cat > zmq-smoke.q <<'EOF'
+%modern
+%requires zmq
+ZContext zcontext();
+ZSocketPair receiver(zcontext, "@inproc://package-compiler");
+ZSocketPair sender(zcontext, ">inproc://package-compiler");
+receiver.setOption(ZMQ_RCVTIMEO, 2000);
+sender.setOption(ZMQ_SNDTIMEO, 2000);
+ZMsg message(("hello", <000102>));
+sender.send(message);
+ZMsg received = receiver.recvMsg();
+if (received.popStr() != "hello" || received.popBin() != <000102> || received.size() != 0) {
+    throw "PACKAGE-TEST-ERROR", "Installed message round trip failed";
+}
+EOF
+/usr/bin/qcc -o zmq-smoke zmq-smoke.q
+./zmq-smoke

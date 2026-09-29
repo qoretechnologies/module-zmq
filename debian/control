@@ -1,0 +1,43 @@
+Source: qore-zmq-module
+Section: interpreters
+Priority: optional
+Maintainer: David Nichols <david@qore.org>
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.21),
+               pkgconf,
+               libsodium-dev,
+               libgnutls28-dev,
+               libbsd-dev,
+               liblz4-dev,
+               uuid-dev,
+               libqore-dev (>= 3.0.0~),
+               qore (>= 3.0.0~),
+               python3
+Build-Depends-Indep: doxygen <!nodoc>
+Standards-Version: 4.7.4
+Rules-Requires-Root: no
+Homepage: https://qore.org
+Vcs-Git: https://github.com/qoretechnologies/module-zmq.git
+Vcs-Browser: https://github.com/qoretechnologies/module-zmq
+
+Package: qore-zmq-module
+Architecture: any
+Depends: ${qore:Depends},
+         ${shlibs:Depends},
+         ${misc:Depends}
+Suggests: qore-zmq-module-doc
+Description: ZeroMQ messaging and draft socket APIs for Qore
+ Native bindings for ZeroMQ contexts, sockets, messages, frames and CURVE
+ security, including CLIENT/SERVER and RADIO/DISH draft APIs. The package
+ includes compiler metadata and private draft-enabled libzmq/CZMQ libraries.
+
+Package: qore-zmq-module-doc
+Section: doc
+Architecture: all
+Multi-Arch: foreign
+Build-Profiles: <!nodoc>
+Depends: ${misc:Depends}
+Suggests: qore-zmq-module
+Description: API reference and tests for Qore's ZeroMQ module
+ HTML API reference and local messaging tests for ZeroMQ contexts, socket
+ patterns, frames, messages, draft socket types and cryptographic operations.

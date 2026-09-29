@@ -1,0 +1,9 @@
+Document: qore-zmq-module
+Title: Qore ZeroMQ Module API Reference
+Author: Qore Technologies, s.r.o.
+Abstract: Native ZeroMQ sockets, messages, frames and security APIs for Qore.
+Section: Programming
+
+Format: HTML
+Index: /usr/share/doc/qore-zmq-module-doc/html/index.html
+Files: /usr/share/doc/qore-zmq-module-doc/html/*.html

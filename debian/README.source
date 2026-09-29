@@ -1,0 +1,35 @@
+Qore ZeroMQ module packages
+==========================
+
+This testing snapshot includes the native module, compiler metadata, HTML
+reference, example tests and debug symbols. Full CLIENT/SERVER and RADIO/DISH
+draft APIs are required; ordinary distribution ZeroMQ builds lack them.
+
+Two pinned orig components contain libzmq 4.3.5 and CZMQ's recorded development
+revision (preserving the existing macOS build choice without tracking master).
+Their sources and licenses are recorded in vendor-sources.json. The repack
+helper validates SHA256 and retains the listed build sources/templates only.
+Prepare the primary orig from tracked module files excluding debian, download
+the two archives outside the build, and run:
+
+  debian/repack-dependencies.py ARCHIVE_DIRECTORY OUTPUT_DIRECTORY
+
+Extract each component without its upstream wrapper into libzmq/ or czmq/,
+copy debian, and run dpkg-buildpackage -S -sa -us -uc. dpkg-source -x restores
+the components. Increment the package version before each distinct upload.
+
+Build unprivileged without network using packaged Qore 3 and declared system
+libraries. Private static ZeroMQ/CZMQ archives are included only in the module;
+their public headers/libraries/tools are not installed. ELF archive symbols are
+hidden to avoid interposing Qore or other modules. Shared system libsodium,
+GnuTLS, libbsd, LZ4 and UUID are used where required. CURVE and draft/proxy
+capability checks prevent silently reduced test coverage.
+
+Five profiles (full, -B, -A, nocheck, nodoc), changed path/job-count repeat builds,
+installed runtime/fresh qcc tests, metadata/docs/debug artifacts and SDK-free
+install/purge/reinstall must pass. Only Ubuntu 26.04 amd64 / Qore SDK .12 is
+initially qualified. No older package is available for upgrade qualification.
+Cross builds fail explicitly because build tools execute Qore. Other releases,
+architectures and the Qore ABI freeze remain general-release requirements.
+Private dependencies require security monitoring and component updates.
+Testing PPA publication requires signing and the matching published SDK.
