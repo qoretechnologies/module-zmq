@@ -28,7 +28,7 @@
 /** @par Overview
     A socket of type \c REQ is used by a client to send requests to and receive replies from a
     service. This socket type allows only an alternating sequence of
-    @ref ZSocket::sendMsg() "ZSocket::send*()"
+    @ref ZSocket::send() "ZSocket::send*()"
     and subsequent @ref ZSocket::recvMsg() "ZSocket::recv*()" calls. Each request sent
     is round-robined among all services, and each reply received is matched with the last
     issued request.

@@ -43,7 +43,7 @@
     @par Timeout Example:
     @code{.py}
     # create a ROUTER socket on all devices on a wildcard/random port
-    ZSocketRouter sock(zctx, name, "tcp://*:*");
+    ZSocketRouter sock(zctx, name, "tcp://0.0.0.0:*");
     # set the default send and receive timeout to unlimited (never time out)
     sock.setTimeout(-1);
     # print out the URL with the actual port number
@@ -86,9 +86,9 @@
     |<tt>@@tcp://127.0.0.1:0</tt>|bind to random port on localhost
     |<tt>@@tcp://127.0.0.1:*</tt>|bind to random port on localhost
     |<tt>@@tcp://127.0.0.1:!</tt>|bind to random port on localhost
-    |<tt>@@tcp://*:0</tt>|bind to random port on all interfaces
-    |<tt>@@tcp://*:*</tt>|bind to random port on all interfaces
-    |<tt>@@tcp://*:!</tt>|bind to random port on all interfaces
+    |<tt>@@tcp://0.0.0.0:0</tt>|bind to random port on all interfaces
+    |<tt>@@tcp://0.0.0.0:*</tt>|bind to random port on all interfaces
+    |<tt>@@tcp://0.0.0.0:!</tt>|bind to random port on all interfaces
 
     @section zmqerrors zmq Errors
 
@@ -238,6 +238,9 @@ server.send(response);
     @endcode
 
     @section zmqreleasenotes zmq Module Release Notes
+
+    - corrected subscription and send-method links and wildcard-address examples
+      so the complete reference builds with strict Doxygen checks
 
     @subsection zmq_1_2_0 zmq Module Version 1.2.0
     <b>New Features and Enhancements:</b>

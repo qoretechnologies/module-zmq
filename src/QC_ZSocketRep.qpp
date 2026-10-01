@@ -30,7 +30,7 @@
 /** A socket of type \c REP is used by a service to receive requests from and send replies to
     a client. This socket type allows only an alternating sequence of
     @ref ZSocket::recvMsg() "ZSocket::recv*()" and subsequent
-    @ref ZSocket::sendMsg() "ZSocket::send*()" calls. Each request received is fair-queued
+    @ref ZSocket::send() "ZSocket::send*()" calls. Each request received is fair-queued
     from among all clients, and each reply sent is routed to the client that issued the last
     request. If the original requester does not exist anymore, the reply is silently discarded.
     \n\n

@@ -1115,7 +1115,7 @@ const ZMQ_STREAM_NOTIFY = ZMQ_STREAM_NOTIFY;
 
     @see
     - @ref ZMQ_UNSUBSCRIBE
-    - @ref ZSocketSub::subcribe()
+    - @ref ZSocketSub::subscribe()
     - @ref ZSocketSub::unsubscribe()
 */
 const ZMQ_SUBSCRIBE = ZMQ_SUBSCRIBE;
@@ -1220,7 +1220,7 @@ const ZMQ_TOS = ZMQ_TOS;
 
     @see
     - @ref ZMQ_SUBSCRIBE
-    - @ref ZSocketSub::subcribe()
+    - @ref ZSocketSub::subscribe()
     - @ref ZSocketSub::unsubscribe()
 */
 const ZMQ_UNSUBSCRIBE = ZMQ_UNSUBSCRIBE;
@@ -3002,7 +3002,7 @@ zsock.send(str1, str2);
     trailing arguments will no value will be ignored, otherwise all additional arguments must be a string or a binary
     value or a \c ZSOCKET-SEND-DATA-ERROR exception will be raised
 
-    The @ref ZMQ_SNDMORE flag is set on all frames except the last
+    The \c ZMQ_SNDMORE flag is set on all frames except the last
 
     @throw ZSOCKET-SEND-ERROR an error occurred sending the data
     @throw ZSOCKET-SEND-DATA-ERROR an argument was included that was not a string or binary object
