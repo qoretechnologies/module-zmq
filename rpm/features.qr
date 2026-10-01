@@ -1,0 +1,12 @@
+#!/usr/bin/env qore
+# Copyright (C) 2026 David Nichols
+# SPDX-License-Identifier: MIT
+%modern
+%requires zmq
+if (!HAVE_ZMQ_DRAFT_APIS || !HAVE_ZMQ_PROXY_STEERABLE) {
+    throw "PACKAGE-TEST-ERROR", "Required draft/proxy API is disabled";
+}
+hash<ZmqCurveKeyInfo> keypair = zmq_curve_keypair();
+if (keypair.pub.length() != 40 || keypair.secret.length() != 40) {
+    throw "PACKAGE-TEST-ERROR", "CURVE crypto is unavailable";
+}

@@ -1,91 +1,135 @@
-%{?_datarootdir: %global mydatarootdir %_datarootdir}
-%{!?_datarootdir: %global mydatarootdir %{buildroot}/usr/share}
-
-%global module_api %(qore --latest-module-api 2>/dev/null)
-%global module_dir %{_libdir}/qore-modules
-%global user_module_dir %{mydatarootdir}/qore-modules/
-
-Name:           qore-zmq-module
-Version:        1.1.0
-Release:        1
-Summary:        Qorus Integration Engine - Qore zmq module
-License:        MIT
-Group:          Development/Languages/Other
-Url:            https://qoretechnologies.com
-Source:         qore-zmq-module-%{version}.tar.bz2
-BuildRequires:  gcc-c++
-%if 0%{?el7}
-BuildRequires:  devtoolset-7-gcc-c++
+# Copyright (C) 2026 Qore Technologies, s.r.o.
+# SPDX-License-Identifier: MIT
+# Use the pinned source epoch for RPM headers and installed file timestamps.
+%global source_date_epoch_from_changelog 1
+%global use_source_date_epoch_as_buildtime 1
+%if v"%{rpmversion}" >= v"4.20"
+%global build_mtime_policy clamp_to_source_date_epoch
+%else
+%global clamp_mtime_to_source_date_epoch 1
 %endif
-BuildRequires:  cmake >= 3.5
-BuildRequires:  qore >= 1.12.4
-BuildRequires:  qore-devel >= 1.12.4
-BuildRequires:  qore-stdlib >= 1.12.4
-BuildRequires:  doxygen
-Requires:       qore-module(abi)%{?_isa} = %{module_api}
-Requires:       %{_bindir}/env
-BuildRoot:      %{_tmppath}/%{name}-%{version}-build
-BuildRequires:  czmq-devel
-Requires:       libzmq5 >= 4.2.3
+%bcond_without tests
+%bcond_without docs
+Name: qore-zmq-module
+Version: 1.2.0
+Release: 1%{?dist}
+Summary: ZeroMQ messaging and draft socket APIs for Qore
+License: MIT AND LGPL-2.1-or-later AND MPL-2.0 AND BSD-3-Clause AND BSD-2-Clause AND Beerware
+URL: https://github.com/qoretechnologies/module-zmq
+Source0: %{name}-%{version}.tar.xz
+Source1: libzmq-4.3.5.tar.xz
+Source2: czmq-b669c7eb60cb8f587071ac6ece7cd68d30ac4017.tar.xz
+Provides: bundled(zeromq) = 4.3.5
+Provides: bundled(czmq) = 4.2.2~gitb669c7e
+BuildRequires: cmake >= 3.21
+BuildRequires: make
+BuildRequires: tar
+BuildRequires: xz
+BuildRequires: gcc-c++
+BuildRequires: pkgconfig(libsodium)
+BuildRequires: pkgconfig(gnutls)
+BuildRequires: pkgconfig(libbsd)
+BuildRequires: pkgconfig(liblz4)
+BuildRequires: pkgconfig(uuid)
+BuildRequires: qore-devel >= 3.0.0~
+BuildRequires: qore-rpm-macros >= 3.0.0~
+%if %{with tests}
+BuildRequires: python3
+%endif
+%if %{with docs}
+BuildRequires: doxygen
+%if 0%{?suse_version}
+BuildRequires: util-linux
+%else
+BuildRequires: util-linux-core
+%endif
+%endif
 
 %description
-This package contains the zmq module for an ZeroMQ API for the Qore Programming Language.
+Native bindings for ZeroMQ contexts, sockets, messages, frames and CURVE
+security, including CLIENT/SERVER and RADIO/DISH draft socket APIs. Includes
+private draft-enabled ZeroMQ libraries and compiler metadata.
+
+%if %{with docs}
+%package doc
+Summary: ZeroMQ module reference documentation and examples
+BuildArch: noarch
+%description doc
+API reference and messaging examples for Qore's ZeroMQ module.
+%endif
 
 %prep
-%setup -q
-
+%autosetup
+tar -xf %{SOURCE1}
+tar -xf %{SOURCE2}
+mv libzmq-4.3.5 libzmq
+mv czmq-b669c7eb60cb8f587071ac6ece7cd68d30ac4017 czmq
 %build
-%if 0%{?el7}
-# enable devtoolset7
-. /opt/rh/devtoolset-7/enable
+%{?set_build_flags}
+. %{_rpmconfigdir}/qore/module-env.sh
+qore_set_source_prefix_maps "%{qore_debug_source_dir}"
+cmake -S . -B build -G 'Unix Makefiles' \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE=-DNDEBUG \
+  -DCMAKE_INSTALL_PREFIX=%{_prefix} \
+  -DUSE_SYSTEM_ZMQ=OFF -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+  -DFETCHCONTENT_SOURCE_DIR_LIBZMQ="$PWD/libzmq" \
+  -DFETCHCONTENT_SOURCE_DIR_CZMQ="$PWD/czmq" \
+  -DENABLE_WS=ON -DWITH_TLS=ON -DWITH_LIBBSD=ON \
+  -DCZMQ_WITH_UUID=ON -DCZMQ_WITH_LZ4=ON \
+  -DCZMQ_WITH_SYSTEMD=OFF -DCZMQ_WITH_LIBCURL=OFF \
+  -DCZMQ_WITH_NSS=OFF -DCZMQ_WITH_LIBMICROHTTPD=OFF \
+  -DCMAKE_SKIP_RPATH=ON -DCMAKE_IGNORE_PREFIX_PATH=/usr/local \
+  -DQore_DIR=%{_libdir}/cmake/Qore -DQORE_EXECUTABLE=/usr/bin/qore \
+  -DQORE_QPP_EXECUTABLE=/usr/bin/qpp \
+  -DCMAKE_DISABLE_FIND_PACKAGE_Doxygen=%{!?with_docs:ON}%{?with_docs:OFF}
+cmake --build build -- %{?_smp_mflags}
+%if %{with docs}
+printf "\nWARN_AS_ERROR = FAIL_ON_WARNINGS\n" >> build/Doxyfile
+cmake --build build --target docs -- %{?_smp_mflags}
 %endif
-export CXXFLAGS="%{?optflags}"
-cmake -DCMAKE_INSTALL_PREFIX=%{_prefix} -DCMAKE_BUILD_TYPE=RELWITHDEBINFO -DCMAKE_SKIP_RPATH=1 -DCMAKE_SKIP_INSTALL_RPATH=1 -DCMAKE_SKIP_BUILD_RPATH=1 -DCMAKE_PREFIX_PATH=${_prefix}/lib64/cmake/Qore .
-make %{?_smp_mflags}
-make %{?_smp_mflags} docs
-sed -i 's/#!\/usr\/bin\/env qore/#!\/usr\/bin\/qore/' test/*.qtest
-
 %install
-make DESTDIR=%{buildroot} install %{?_smp_mflags}
-
-%files
-%{module_dir}
-
+DESTDIR=%{buildroot} cmake --install build
+for library in libzmq czmq; do
+    install -d %{buildroot}%{_licensedir}/%{name}/$library
+    install -m644 $library/LICENSE $library/AUTHORS %{buildroot}%{_licensedir}/%{name}/$library/
+done
+# Retain notices for the small third-party sources compiled into the libraries.
+sed -n '1,/\*\//p' libzmq/external/sha1/sha1.c > %{buildroot}%{_licensedir}/%{name}/libzmq/LICENSE.sha1.txt
+sed -n '1,/\*\//p' czmq/src/foreign/slre/slre.h > %{buildroot}%{_licensedir}/%{name}/czmq/LICENSE.slre.txt
+chmod 755 %{buildroot}%{_libdir}/qore-modules/zmq-api-*.qmod
+%if %{with docs}
+install -d %{buildroot}%{_docdir}/%{name}-doc
+cp -a build/docs/zmq/html %{buildroot}%{_docdir}/%{name}-doc/
+install -d %{buildroot}%{_docdir}/%{name}-doc/examples/test
+install -m644 test/*.qtest %{buildroot}%{_docdir}/%{name}-doc/examples/test/
+hardlink -t -O %{buildroot}%{_docdir}/%{name}-doc
+%endif
 %check
-qore -l ./zmq-api-%{module_api}.qmod test/zmq.qtest -v
-
-%package doc
-Summary: Documentation and examples for the Qore zmq module
-Group: Development/Languages/Other
-
-%description doc
-This package contains the HTML documentation and example programs for the Qore
-zmq module.
-
+%if %{with tests}
+. %{_rpmconfigdir}/qore/module-env.sh
+%if %{with docs}
+python3 -B -W error test/test_docs.py build -v
+%endif
+module="$PWD/build/zmq-api-$(/usr/bin/qore --latest-module-api).qmod"
+/usr/bin/qore -b --enable-debug -l "$module" rpm/features.qr
+for suite in test/*.qtest; do
+    timeout 600 /usr/bin/qore -b --enable-debug -l "$module" "$suite" -v
+done
+%endif
+%files
+%license %{_licensedir}/%{name}/libzmq
+%license %{_licensedir}/%{name}/czmq
+%license LICENSE debian/copyright
+%doc README.md
+%{_libdir}/qore-modules/zmq-api-*.qmod
+%dir %{_datadir}/qore/metadata/zmq
+%{_datadir}/qore/metadata/zmq/*.meta.json
+%if %{with docs}
 %files doc
-%defattr(-,root,root,-)
-%doc docs/zmq test
-
+%license LICENSE debian/copyright
+%doc %{_docdir}/%{name}-doc/
+%endif
 %changelog
-* Sun Dec 29 2024 David Nichols <david@qore.org>
-- updated to v1.1.0
-- added ZFrame::readi2N(), readi4N(), readi8N() for network byte order reading
-- added ZSocket::tryRecvMsg(), tryRecvFrame() for non-blocking receive
-- added ZSocket::hasMore() to check for additional message parts
-- added ZSocket::setRecvHighWaterMark(), setSendHighWaterMark()
-- added ZSocket::proxySteerable() for steerable proxy support
-- added zmq_z85_decode() function
-- added HAVE_ZMQ_PROXY_STEERABLE constant
-- fixed exception name in ZFrame::readi4()
-- fixed boundary checks in ZFrame read methods
-- fixed string option handling in ZSocket::getOption()
-
-* Tue Dec 20 2022 David Nichols <david@qore.org>
-- updated to v1.0.2
-
-* Tue Feb 15 2022 David Nichols <david@qore.org>
-- updated to v1.0.1
-
-* Thu Jan 27 2022 David Nichols <david@qore.org>
-- initial 1.0.0 release
-
+* Thu Oct 01 2026 David Nichols <david@qore.org> - 1.2.0-1
+- Package complete draft APIs and CURVE support using pinned offline sources.
+- Include metadata, reference documentation and all local messaging suites.

@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "components": [
+    {
+      "name": "libzmq",
+      "url": "https://codeload.github.com/zeromq/libzmq/tar.gz/v4.3.5",
+      "sha256": "6c972d1e6a91a0ecd79c3236f04cf0126f2f4dfbbad407d72b4606a7ba93f9c6",
+      "top": "libzmq-4.3.5",
+      "retained_paths": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "AUTHORS",
+        "NEWS",
+        "README.md",
+        "src",
+        "include",
+        "builds/cmake",
+        "external/sha1",
+        "external/wepoll",
+        "version.sh"
+      ],
+      "archive": "libzmq-4.3.5.tar.xz",
+      "licenses": [
+        "LICENSE"
+      ],
+      "version": "v4.3.5"
+    },
+    {
+      "name": "czmq",
+      "url": "https://codeload.github.com/zeromq/czmq/tar.gz/b669c7eb60cb8f587071ac6ece7cd68d30ac4017",
+      "sha256": "1ef06cd24fbe91f094ff2b4ce54aaf9c6fa394bec0e12c9f5b4f491f7aaa03d0",
+      "top": "czmq-b669c7eb60cb8f587071ac6ece7cd68d30ac4017",
+      "retained_paths": [
+        "CMakeLists.txt",
+        "LICENSE",
+        "AUTHORS",
+        "NEWS",
+        "README.md",
+        "README.txt",
+        "src",
+        "include",
+        "Findlibcurl.cmake",
+        "Findlibmicrohttpd.cmake",
+        "Findlibsodium.cmake",
+        "Findlibzmq.cmake",
+        "Findlz4.cmake",
+        "Findnss.cmake",
+        "Findsystemd.cmake",
+        "Finduuid.cmake",
+        "builds/cmake"
+      ],
+      "archive": "czmq-b669c7eb60cb8f587071ac6ece7cd68d30ac4017.tar.xz",
+      "licenses": [
+        "LICENSE"
+      ],
+      "version": "b669c7eb60cb8f587071ac6ece7cd68d30ac4017"
+    }
+  ]
+}
