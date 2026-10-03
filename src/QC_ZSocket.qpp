@@ -1875,7 +1875,7 @@ zsock.monitor(ZMQ_EVENT_ALL, "inproc://monitor-socket-1");
     @endcode
 
     @param events an event code mask combined with binary or; see @ref zsocket_events for possible values
-    @param format the format string for the @ref zmqendpoints "endpoint", which must be an \c "inproc://" endpoint
+    @param format the format string for the @ref zmqendpointsguide "endpoint", which must be an \c "inproc://" endpoint
     @param ... optional arguments for the format string
 
     @throw ZSOCKET-MONITOR-ERROR this exception is thrown if the internal call to \c zmq_socket_monitor() fails
@@ -1905,7 +1905,7 @@ nothing ZSocket::monitor(int events, string[doc] format, ...) {
         zmq_error(xsink, "ZSOCKET-MONITOR-ERROR", "error in ZSocket::monitor(" QLLD ", \"%s\")", events, str->c_str());
 }
 
-//! Bind the ZSocket to a formatted @ref zmqendpoints "endpoint"
+//! Bind the ZSocket to a formatted @ref zmqendpointsguide "endpoint"
 /** @par Examples:
     @code{.py}
 # bind to a random port
@@ -1917,7 +1917,7 @@ port = zsock.bind("tcp://127.0.0.1:0");
     For \c tcp:// endpoints, this class supports binding on a random free port if you
     specify the port number as "*" or \ "0".
 
-    @param format the format string for the @ref zmqendpoints "endpoint"
+    @param format the format string for the @ref zmqendpointsguide "endpoint"
     @param ... optional arguments for the format string
 
     @return the actual port number used for \c "tcp://" endpoints,
@@ -1943,13 +1943,13 @@ int ZSocket::bind(string[doc] format, ...) {
     return zsock->bind(xsink, str->c_str());
 }
 
-//! Returns the last bound @ref zmqendpoints "endpoint", if any or @ref nothing if not
+//! Returns the last bound @ref zmqendpointsguide "endpoint", if any or @ref nothing if not
 /** @par Examples:
     @code{.py}
 *string endpoint = zsock.endpoint();
     @endcode
 
-    @return the last bound @ref zmqendpoints "endpoint", if any or @ref nothing if not
+    @return the last bound @ref zmqendpointsguide "endpoint", if any or @ref nothing if not
 
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
 */
@@ -1970,18 +1970,18 @@ int ZSocket::bind(string[doc] format, ...) {
     return rv.release();
 }
 
-//! Unbinds the socket from a formatted @ref zmqendpoints "endpoint"
+//! Unbinds the socket from a formatted @ref zmqendpointsguide "endpoint"
 /** @par Examples:
     @code{.py}
 zsock.unbind(str);
     @endcode
 
-    @param format the format string for the @ref zmqendpoints "endpoint"
+    @param format the format string for the @ref zmqendpointsguide "endpoint"
     @param ... optional arguments for the format string
 
-    Throws an exception if the @ref zmqendpoints "endpoint" was invalid or the function isn't supported on the current socket
+    Throws an exception if the @ref zmqendpointsguide "endpoint" was invalid or the function isn't supported on the current socket
 
-    @throw ZSOCKET-UNBIND-ERROR thrown if the @ref zmqendpoints "endpoint" was invalid or the function isn't supported on the current socket
+    @throw ZSOCKET-UNBIND-ERROR thrown if the @ref zmqendpointsguide "endpoint" was invalid or the function isn't supported on the current socket
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
 
@@ -2000,18 +2000,18 @@ nothing ZSocket::unbind(string[doc] format, ...) {
         zmq_error(xsink, "ZSOCKET-UNBIND-ERROR", "error in ZSocket::unbind(\"%s\")", str->c_str());
 }
 
-//! Connects the socket to a formatted @ref zmqendpoints "endpoint"
+//! Connects the socket to a formatted @ref zmqendpointsguide "endpoint"
 /** @par Examples:
     @code{.py}
 zsock.unbind(str);
     @endcode
 
-    @param format the format string for the @ref zmqendpoints "endpoint"
+    @param format the format string for the @ref zmqendpointsguide "endpoint"
     @param ... optional arguments for the format string
 
-    Throws an exception if an error occurs connecting to the @ref zmqendpoints "endpoint"
+    Throws an exception if an error occurs connecting to the @ref zmqendpointsguide "endpoint"
 
-    @throw ZSOCKET-CONNECT-ERROR thrown if an error occurs connecting to the @ref zmqendpoints "endpoint"
+    @throw ZSOCKET-CONNECT-ERROR thrown if an error occurs connecting to the @ref zmqendpointsguide "endpoint"
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
 
@@ -2029,18 +2029,18 @@ nothing ZSocket::connect(string[doc] format, ...) {
     zsock->connect(xsink, str->c_str());
 }
 
-//! Disconnects the socket from a formatted @ref zmqendpoints "endpoint"
+//! Disconnects the socket from a formatted @ref zmqendpointsguide "endpoint"
 /** @par Examples:
     @code{.py}
 zsock.disconnect(str);
     @endcode
 
-    @param format the format string for the @ref zmqendpoints "endpoint"
+    @param format the format string for the @ref zmqendpointsguide "endpoint"
     @param ... optional arguments for the format string
 
-    Throws an exception if the @ref zmqendpoints "endpoint" was invalid or the function isn't supported on the current socket
+    Throws an exception if the @ref zmqendpointsguide "endpoint" was invalid or the function isn't supported on the current socket
 
-    @throw ZSOCKET-DISCONNECT-ERROR thrown if the @ref zmqendpoints "endpoint" was invalid or the function isn't supported on the current socket
+    @throw ZSOCKET-DISCONNECT-ERROR thrown if the @ref zmqendpointsguide "endpoint" was invalid or the function isn't supported on the current socket
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
 */
@@ -2059,13 +2059,13 @@ nothing ZSocket::disconnect(string[doc] format, ...) {
         zmq_error(xsink, "ZSOCKET-DISCONNECT-ERROR", "error in ZSocket::disconnect(\"%s\")", str->c_str());
 }
 
-//! Attaches the socket to zero or more @ref zmqendpoints "endpoints"
+//! Attaches the socket to zero or more @ref zmqendpointsguide "endpoints"
 /** @par Examples:
     @code{.py}
 zsock.attach(endpoints_str, True);
     @endcode
 
-    @param endpoints zero or more @ref zmqendpoints "endpoints", separated by commas and prefixed by \c '@' (to bind the socket) or \c '>' (to connect the socket)
+    @param endpoints zero or more @ref zmqendpointsguide "endpoints", separated by commas and prefixed by \c '@' (to bind the socket) or \c '>' (to connect the socket)
     @param do_bind determines if endpoints not prefixed with \c '@' or \c '>' are bound (\a do_bind = @ref Qore::True "True") or connected (\a do_bind = @ref Qore::False "False", the default)
 
     Throws an exception if there was a syntax error in the \a endpoints argument

@@ -5,7 +5,7 @@
 
     Qore Programming Language
 
-    Copyright (C) 2017 - 2018 Qore Technologies, s.r.o.
+    Copyright (C) 2017 - 2026 Qore Technologies, s.r.o.
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -61,7 +61,7 @@ ZSocketReq sock(ctx, "my-identity", "tcp://127.0.0.1:8001");
 
     @param zcontext the context for the socket
     @param identity the identity value for the socket; a missing or empty value here results in the default identity being assigned
-    @param endpoint the @ref zmqendpoints "endpoint" for the socket; the default action is connect
+    @param endpoint the @ref zmqendpointsguide "endpoint" for the socket; the default action is connect
 
     @throw ZSOCKET-CONSTRUCTOR-ERROR this exception is thrown if there is any error creating the socket
     @throw ZSOCKET-CONNECT-ERROR this exception is thrown if there is any error connecting the socket

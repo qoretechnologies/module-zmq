@@ -5,7 +5,7 @@
 
   Qore Programming Language
 
-  Copyright (C) 2017 - 2018 Qore Technologies, s.r.o.
+  Copyright (C) 2017 - 2026 Qore Technologies, s.r.o.
 
   This library is free software; you can redistribute it and/or
   modify it under the terms of the GNU Lesser General Public
@@ -59,7 +59,7 @@ ZSocketPub sock(ctx, "tcp://127.0.0.1:8001");
     @endcode
 
     @param zcontext the context for the socket
-    @param endpoint the @ref zmqendpoints "endpoint" for the socket; the default action is bind
+    @param endpoint the @ref zmqendpointsguide "endpoint" for the socket; the default action is bind
 
     @throw ZSOCKET-CONSTRUCTOR-ERROR this exception is thrown if there is any error creating the socket
     @throw ZSOCKET-BIND-ERROR this exception is thrown if there is any error connecting the socket
