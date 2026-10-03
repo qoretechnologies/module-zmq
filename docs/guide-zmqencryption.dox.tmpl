@@ -1,0 +1,55 @@
+/* Copyright (C) 2026 Qore Technologies, s.r.o. */
+
+/** @page zmqencryptionguide zmq Encryption
+
+    @tableofcontents
+
+    Encryption is supported using the <a href="http://curvezmq.org/">Curve</a> implementation in ZeroMQ.
+
+    Encryption keys must be either 32-byte binary values or 40-byte Z85 formatted printable strings.
+    Z85 formatted printable strings can be generated with the @ref Qore::ZMQ::zmq_z85_encode() "zmq_z85_encode()".
+
+    A public key must be generated from the private key; this can be done with either the
+    @ref Qore::ZMQ::zmq_curve_keypair() "zmq_curve_keypair()" function, which generates a random private key
+    and a matching public key, or with the @ref Qore::ZMQ::zmq_curve_public() "zmq_curve_public()"
+    function.
+
+    Encryption options are set with the @ref Qore::ZMQ::ZSocket::setOption() "ZSocket::setOption()" method; see
+    the following example for information on how to set the encryption settings on the client and the server.
+
+    @par Example:
+    @code{.py}
+# generate a printable random server key
+string server_secret = zmq_z85_encode(get_random_bytes(32));
+# generate the corresponding public key
+string server_pub = zmq_curve_public(server_secret);
+# generate a printable random client key
+string client_secret = zmq_z85_encode(get_random_bytes(32));
+# generate the corresponding public key
+string client_pub = zmq_curve_public(client_secret);
+
+# create the server socket
+ZSocketRouter server(zctx, "my-server");
+# set encryption options; ZMQ_CURVE_SERVER must only be set on the server
+server.setOption(ZMQ_CURVE_SERVER, 1);
+server.setOption(ZMQ_CURVE_SECRETKEY, server_secret);
+server.setOption(ZMQ_CURVE_PUBLICKEY, server_pub);
+# bind the server on a random port
+server.bind("tcp://127.0.0.1:*");
+
+# create the client socket
+ZSocketDealer client(zctx, "my-client");
+# set encryption options; ZMQ_CURVE_SERVER must only be set on the server
+client.setOption(ZMQ_CURVE_SERVER, 0);
+client.setOption(ZMQ_CURVE_SERVERKEY, server_pub);
+client.setOption(ZMQ_CURVE_SECRETKEY, client_secret);
+client.setOption(ZMQ_CURVE_PUBLICKEY, client_pub);
+
+# connect to the server
+client.connect(server.endpoint());
+
+# now we can send data
+client.send(HelloWorld);
+ZMsg msg = server.recvMsg();
+    @endcode
+*/

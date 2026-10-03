@@ -1,0 +1,30 @@
+/* Copyright (C) 2026 Qore Technologies, s.r.o. */
+
+/** @page zmqendpointsguide zmq Endpoints
+
+    @tableofcontents
+
+    Endpoints have the following format:
+    - <tt><i>[@@|>]transport</i>://<i>address</i></tt>
+
+    Endpoint prefixes have the following meaning:
+    - \c @@: bind the socket
+    - \c >: connect to the remote socket
+
+    Example transports:
+    - <tt>tcp://</tt>: for TCP socket connections
+    - <tt>inproc://</tt>: for in-process connections
+
+    @section zmqendpoints_tcp Binding TCP Endpoints
+
+    <tt>tcp://</tt> endpoints support binding on a random free port if you specify the port number as \c "*", \c "!", or \c 0 and support binding on all interfaces if you specify the interface or host name as \c "*".
+
+    <b>Examples</b>
+    |!Endpoint|!Description
+    |<tt>@@tcp://127.0.0.1:0</tt>|bind to random port on localhost
+    |<tt>@@tcp://127.0.0.1:*</tt>|bind to random port on localhost
+    |<tt>@@tcp://127.0.0.1:!</tt>|bind to random port on localhost
+    |<tt>@@tcp://0.0.0.0:0</tt>|bind to random port on all interfaces
+    |<tt>@@tcp://0.0.0.0:*</tt>|bind to random port on all interfaces
+    |<tt>@@tcp://0.0.0.0:!</tt>|bind to random port on all interfaces
+*/

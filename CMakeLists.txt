@@ -335,6 +335,12 @@ set(module_name "zmq")
 
 set(QORE_DOX_TMPL_SRC
   docs/mainpage.dox.tmpl
+    docs/guide-zmq_examples.dox.tmpl
+    docs/guide-zmqencryption.dox.tmpl
+    docs/guide-zmqendpoints.dox.tmpl
+    docs/guide-zmqpackaging.dox.tmpl
+    docs/guide-zmqreleasenotes.dox.tmpl
+    docs/guide-zmqthreadsafe.dox.tmpl
 )
 
 add_library(${module_name} MODULE ${CPP_SRC} ${QPP_SOURCES})
@@ -355,6 +361,14 @@ if (DEFINED ENV{DOXYGEN_EXECUTABLE})
     set(DOXYGEN_EXECUTABLE $ENV{DOXYGEN_EXECUTABLE})
 endif()
 
+list(APPEND MODULE_DOX_INPUT
+    ${CMAKE_CURRENT_BINARY_DIR}/guide-zmq_examples.dox
+    ${CMAKE_CURRENT_BINARY_DIR}/guide-zmqencryption.dox
+    ${CMAKE_CURRENT_BINARY_DIR}/guide-zmqendpoints.dox
+    ${CMAKE_CURRENT_BINARY_DIR}/guide-zmqpackaging.dox
+    ${CMAKE_CURRENT_BINARY_DIR}/guide-zmqreleasenotes.dox
+    ${CMAKE_CURRENT_BINARY_DIR}/guide-zmqthreadsafe.dox
+)
 qore_external_binary_module(${module_name} ${PROJECT_VERSION})
 
 qore_dist(${PROJECT_VERSION})

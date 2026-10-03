@@ -1,0 +1,63 @@
+/* Copyright (C) 2026 Qore Technologies, s.r.o. */
+
+/** @page zmqreleasenotesguide zmq Module Release Notes
+
+    @tableofcontents
+
+    - corrected subscription and send-method links and wildcard-address examples
+      so the complete reference builds with strict Doxygen checks
+
+    @section zmq_1_2_0 zmq Module Version 1.2.0
+    <b>New Features and Enhancements:</b>
+    - Added @ref Qore::ZMQ::ZSocketClient "ZSocketClient" class - thread-safe CLIENT socket implementation
+      that can be safely accessed from multiple threads without external locking
+      (requires libzmq draft API)
+    - Added @ref Qore::ZMQ::ZSocketServer "ZSocketServer" class - thread-safe SERVER socket implementation
+      with routing_id-based client addressing (requires libzmq draft API)
+    - Added @ref Qore::ZMQ::ZSocketServer::getRoutingId() "ZSocketServer::getRoutingId()": get routing_id
+      from last received message
+    - Added @ref Qore::ZMQ::ZSocketServer::setRoutingId() "ZSocketServer::setRoutingId()": set routing_id
+      for next send operation
+    - Transparent multi-frame serialization for CLIENT/SERVER sockets - variadic send() and recvMsg()
+      automatically serialize/deserialize multiple frames into single frames for CLIENT/SERVER sockets
+    - Added @ref Qore::ZMQ::HAVE_ZMQ_DRAFT_APIS "HAVE_ZMQ_DRAFT_APIS" constant for feature detection
+
+    <b>Notes:</b>
+    - CLIENT/SERVER sockets require libzmq 4.2+ with draft API enabled
+    - Build with \c -DQORE_BUILD_ZMQ_DRAFT=1 to enable draft API support
+    - These sockets are thread-safe and can be shared across threads without external locking
+
+    @section zmq_1_1_0 zmq Module Version 1.1.0
+    <b>New Features and Enhancements:</b>
+    - Added support for interruptible I/O for graceful termination of sandboxed programs; poll
+      and receive operations use 500ms polling intervals with interrupt checks when a sandbox
+      manager is active, and interrupt checks are also performed before bind and connect operations
+      (<a href="https://github.com/qoretechnologies/qore/issues/5116">issue 5116</a>)
+    - Added @ref Qore::ZMQ::ZFrame::readi2N() "ZFrame::readi2N()": read 16-bit integer in network byte order
+    - Added @ref Qore::ZMQ::ZFrame::readi4N() "ZFrame::readi4N()": read 32-bit integer in network byte order
+    - Added @ref Qore::ZMQ::ZFrame::readi8N() "ZFrame::readi8N()": read 64-bit integer in network byte order
+    - Added @ref Qore::ZMQ::ZSocket::tryRecvMsg() "ZSocket::tryRecvMsg()": non-blocking receive returning \c NOTHING on timeout
+    - Added @ref Qore::ZMQ::ZSocket::tryRecvFrame() "ZSocket::tryRecvFrame()": non-blocking frame receive returning \c NOTHING on timeout
+    - Added @ref Qore::ZMQ::ZSocket::hasMore() "ZSocket::hasMore()": check if more message parts are waiting
+    - Added @ref Qore::ZMQ::ZSocket::setRecvHighWaterMark() "ZSocket::setRecvHighWaterMark()": set receive high water mark
+    - Added @ref Qore::ZMQ::ZSocket::setSendHighWaterMark() "ZSocket::setSendHighWaterMark()": set send high water mark
+    - Added @ref Qore::ZMQ::ZSocket::proxySteerable() "ZSocket::proxySteerable()": steerable proxy with PAUSE/RESUME/TERMINATE support (when available)
+    - Added @ref Qore::ZMQ::zmq_z85_decode() "zmq_z85_decode()": decode Z85-encoded strings to binary
+    - Added @ref Qore::ZMQ::HAVE_ZMQ_PROXY_STEERABLE "HAVE_ZMQ_PROXY_STEERABLE" constant for feature detection
+
+    <b>Bug Fixes:</b>
+    - Fixed exception name from \c ZMSG-READ-ERROR to \c ZFRAME-READ-ERROR in @ref Qore::ZMQ::ZFrame::readi4() "ZFrame::readi4()"
+    - Fixed boundary checks in @ref Qore::ZMQ::ZFrame::readi2() "ZFrame::readi2()", @ref Qore::ZMQ::ZFrame::readi4() "ZFrame::readi4()" to properly handle frames smaller than the read size
+    - Fixed @ref Qore::ZMQ::ZSocket::getOption() "ZSocket::getOption()" for string options to not include null terminator in string length
+
+    @section zmq_1_0_2 zmq Module Version 1.0.2
+    - Updated to build with \c qpp from %Qore 1.12.4+
+
+    @section zmq_1_0_1 zmq Module Version 1.0.1
+    - fixed a crash with newer versions of ZeroMQ where \c zmq_ctx_destroy() cannot be called after \c zmq_ctx_term()
+      as it will cause a core dump
+      (<a href="https://github.com/qorelanguage/qore/issues/4446">issue 4446</a>)
+
+    @section zmq_1_0 zmq Module Version 1.0
+    - initial public release
+*/
