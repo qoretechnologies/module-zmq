@@ -2116,15 +2116,13 @@ nothing ZSocket::send(Qore::ZMQ::ZMsg[QoreZMsg] msg) [flags=NAMED_ARGS] {
         // For CLIENT/SERVER sockets, serialize all frames into a single frame
         int sock_type = zsock->getType();
         if (isThreadSafeSocketType(sock_type)) {
-            // Count frames and calculate total size
+            // Count frames for the serialized message header.
             size_t frame_count = 0;
-            size_t total_size = 4;  // frame count header
 
             for (zframe_t* frame = zmsg_first(***msg); frame; frame = zmsg_next(***msg)) {
                 if (frame_count && !(frame_count % 100) && qore_check_cancel(xsink, "ZSocket message serialization"))
                     return QoreValue();
                 ++frame_count;
-                total_size += 4 + zframe_size(frame);
             }
 
             // Create serialized buffer

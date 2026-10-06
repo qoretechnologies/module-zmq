@@ -31,3 +31,14 @@ source tree as an unprivileged user::
 
 Only test files are copied outside the checkout. The tests use installed
 modules, with networking disabled except for the container's local loopback.
+
+Release 1.2.0-2 consumes denied-address probe exceptions before selecting another
+address or reporting the final denial. The sandbox regression repeats rejected
+bind/connect operations, checks permitted operations and malformed endpoints,
+and rejects unexpected standard-error output. Network policy is unchanged.
+
+The private CZMQ archive retains assertion expressions in optimized builds:
+CZMQ performs required hash-table resizing inside those expressions. The
+module itself keeps the distribution's release flags. A native regression
+checks 10,000 insertions, actual rehash callbacks, duplicate-key rejection,
+lookups and deletion against the linked private archive.

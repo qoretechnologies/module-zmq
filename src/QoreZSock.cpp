@@ -130,6 +130,9 @@ static bool checkTcpUdpAccess(QoreSandboxManager* sm, const char* hostport, int 
                 break;
             }
         }
+        // A rejected address is an intermediate probe. The caller receives
+        // one denial below only if every resolved address is rejected.
+        tmp.clear();
     }
     freeaddrinfo(res);
     if (!allowed) {

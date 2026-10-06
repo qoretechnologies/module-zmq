@@ -12,7 +12,7 @@
 %bcond_without docs
 Name: qore-zmq-module
 Version: 1.2.0
-Release: 1%{?dist}
+Release: 2%{?dist}
 Summary: ZeroMQ messaging and draft socket APIs for Qore
 License: MIT AND LGPL-2.1-or-later AND MPL-2.0 AND BSD-3-Clause AND BSD-2-Clause AND Beerware
 URL: https://github.com/qoretechnologies/module-zmq
@@ -64,6 +64,8 @@ tar -xf %{SOURCE1}
 tar -xf %{SOURCE2}
 mv libzmq-4.3.5 libzmq
 mv czmq-b669c7eb60cb8f587071ac6ece7cd68d30ac4017 czmq
+# This upstream header is incorrectly marked executable; retain source mode.
+chmod 644 libzmq/src/yqueue.hpp
 %build
 %{?set_build_flags}
 . %{_rpmconfigdir}/qore/module-env.sh
@@ -81,6 +83,7 @@ cmake -S . -B build -G 'Unix Makefiles' \
   -DCMAKE_SKIP_RPATH=ON -DCMAKE_IGNORE_PREFIX_PATH=/usr/local \
   -DQore_DIR=%{_libdir}/cmake/Qore -DQORE_EXECUTABLE=/usr/bin/qore \
   -DQORE_QPP_EXECUTABLE=/usr/bin/qpp \
+  -DQORE_GENERATE_JAVA_BINDINGS=OFF \
   -DCMAKE_DISABLE_FIND_PACKAGE_Doxygen=%{!?with_docs:ON}%{?with_docs:OFF}
 cmake --build build -- %{?_smp_mflags}
 %if %{with docs}
@@ -106,12 +109,15 @@ hardlink -t -O %{buildroot}%{_docdir}/%{name}-doc
 %endif
 %check
 %if %{with tests}
+cmake --build build --target czmq-hash-growth-test -- %{?_smp_mflags}
+build/czmq-hash-growth-test
 . %{_rpmconfigdir}/qore/module-env.sh
 %if %{with docs}
 python3 -B -W error test/test_docs.py build -v
 %endif
 module="$PWD/build/zmq-api-$(/usr/bin/qore --latest-module-api).qmod"
 /usr/bin/qore -b --enable-debug -l "$module" rpm/features.qr
+python3 -B -W error test/run-sandbox-errors.py --module "$module"
 for suite in test/*.qtest; do
     timeout 600 /usr/bin/qore -b --enable-debug -l "$module" "$suite" -v
 done
@@ -130,6 +136,11 @@ done
 %doc %{_docdir}/%{name}-doc/
 %endif
 %changelog
+* Tue Oct 06 2026 David Nichols <david@qore.org> - 1.2.0-2
+- Consume temporary address-probe exceptions while retaining caller-visible denial.
+- Verify repeated denied and allowed operations with no abandoned-error output.
+- Retain required CZMQ assertion expressions and verify hash-table growth.
+
 * Thu Oct 01 2026 David Nichols <david@qore.org> - 1.2.0-1
 - Package complete draft APIs and CURVE support using pinned offline sources.
 - Include metadata, reference documentation and all local messaging suites.

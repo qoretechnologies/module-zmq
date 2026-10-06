@@ -278,6 +278,22 @@ else()
         set(libzmq_INCLUDE_DIRS "${libzmq_SOURCE_DIR}/include;${libzmq_BINARY_DIR}")
         set(libzmq_LIBRARIES libzmq-static)
         add_subdirectory("${czmq_SOURCE_DIR}" "${czmq_BINARY_DIR}" EXCLUDE_FROM_ALL)
+        # CZMQ executes required operations (including hash-table resizing)
+        # inside assert(). Its private archive must retain those expressions
+        # in optimized builds; the Qore module keeps its normal release flags.
+        if(MSVC)
+            target_compile_options(czmq-static PRIVATE /UNDEBUG)
+        elseif(APPLE)
+            target_compile_options(czmq-static PRIVATE -UNDEBUG)
+        else()
+            # Unix archives reuse objects compiled by this separate target.
+            target_compile_options(czmq_objects PRIVATE -UNDEBUG)
+        endif()
+        add_executable(czmq-hash-growth-test EXCLUDE_FROM_ALL test/czmq-hash-growth.c)
+        target_include_directories(czmq-hash-growth-test PRIVATE
+            "${czmq_SOURCE_DIR}/include" "${czmq_BINARY_DIR}"
+            "${libzmq_SOURCE_DIR}/include" "${libzmq_BINARY_DIR}")
+        target_link_libraries(czmq-hash-growth-test PRIVATE czmq-static libzmq-static)
         # CZMQ public headers explicitly export symbols even for Unix static builds.
         # Hide archive symbols at the final module link as well as during compilation.
         set(QORE_PRIVATE_ZMQ_INCLUDES "${libzmq_SOURCE_DIR}/include;${libzmq_BINARY_DIR};${czmq_SOURCE_DIR}/include;${czmq_BINARY_DIR}" PARENT_SCOPE)

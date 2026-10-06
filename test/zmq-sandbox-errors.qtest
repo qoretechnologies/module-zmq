@@ -1,0 +1,69 @@
+#!/usr/bin/env qore
+# Copyright (C) 2026 Qore Technologies, s.r.o.
+# SPDX-License-Identifier: MIT
+%modern
+%requires zmq
+%requires QUnit
+%exec-class SandboxErrorsTest
+
+class SandboxErrorsTest inherits QUnit::Test {
+    constructor() : Test("ZeroMQ sandbox error ownership", "1.0") {
+        addTestCase("IPv4 bind denial", \denied(), ("tcp://127.0.0.1:15555", True));
+        addTestCase("IPv6 bind denial", \denied(), ("tcp://[::1]:15555", True));
+        addTestCase("resolved hostname bind denial", \denied(), ("tcp://localhost:15555", True));
+        addTestCase("IPv4 connect denial", \denied(), ("tcp://127.0.0.1:15556", False));
+        addTestCase("resolved hostname connect denial", \denied(), ("tcp://localhost:15556", False));
+        addTestCase("allowed bind and connect", \allowed());
+        addTestCase("malformed endpoint", \malformed());
+        set_return_value(main());
+    }
+
+    private Program program() {
+        Program p();
+        p.loadModule("zmq");
+        p.parse("%modern\nint sub bind_endpoint(string endpoint) {\n"
+            + "ZContext zctx(); ZSocketPull socket(zctx); return socket.bind(endpoint); }\n"
+            + "sub connect_endpoint(string endpoint) {\n"
+            + "ZContext zctx(); ZSocketPush socket(zctx); socket.connect(endpoint); }\n",
+            "sandbox_error_ownership");
+        return p;
+    }
+
+    private denied(string endpoint, bool bind) {
+        Program p = program();
+        SandboxManager sm();
+        sm.setNetworkDefaultPolicy(True);
+        sm.blockLocalhost();
+        p.setSandboxManager(sm);
+        for (int i = 0; i < 100; ++i) {
+            bool caught = False;
+            try {
+                p.callFunction(bind ? "bind_endpoint" : "connect_endpoint", endpoint);
+            } catch (hash<ExceptionInfo> ex) {
+                assertEq("NETWORK-ACCESS-DENIED", ex.err, "exact caller-visible denial");
+                caught = True;
+            }
+            assertTrue(caught, "network policy must reject every attempted operation");
+        }
+    }
+
+    private allowed() {
+        Program p = program();
+        SandboxManager sm();
+        sm.setNetworkDefaultPolicy(True);
+        p.setSandboxManager(sm);
+        for (int i = 0; i < 10; ++i) {
+            int port = p.callFunction("bind_endpoint", "tcp://127.0.0.1:0");
+            assertTrue(port > 0, "allowed bind selects a real ephemeral port");
+            assertEq(NOTHING, p.callFunction("connect_endpoint", "tcp://127.0.0.1:15556"));
+        }
+    }
+
+    private malformed() {
+        Program p = program();
+        SandboxManager sm();
+        sm.setNetworkDefaultPolicy(True);
+        p.setSandboxManager(sm);
+        assertThrows("ZMQ-ENDPOINT-ERROR", \p.callFunction(), ("bind_endpoint", "tcp://localhost"));
+    }
+}
