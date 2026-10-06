@@ -543,15 +543,19 @@ class ZmqTest inherits QUnit::Test {
         # unbind queues listener teardown on the I/O thread. Observe its closed
         # event before reusing the same port; deleting the socket is asynchronous.
         string closed_endpoint = reader.endpoint();
-        reader.monitor(ZMQ_EVENT_CLOSED, "inproc://req-rep-close");
+        reader.monitor(ZMQ_EVENT_CLOSED | ZMQ_EVENT_MONITOR_STOPPED, "inproc://req-rep-close");
         ZSocketPair close_monitor(zctx, "inproc://req-rep-close");
-        assertEq(NOTHING, reader.unbind(reader.endpoint()));
-        close_monitor.waitRead(10s);
-        ZMsg closed = close_monitor.recvMsg();
-        assertEq(2, closed.size());
-        assertEq(ZMQ_EVENT_CLOSED, closed.popFrame().readi2(0));
-        assertEq(closed_endpoint, closed.popStr());
-        delete reader;
+        {
+            on_exit {
+                closeMonitoredSocket(reader, close_monitor);
+            }
+            assertEq(NOTHING, reader.unbind(reader.endpoint()));
+            close_monitor.waitRead(10s);
+            ZMsg closed = close_monitor.recvMsg();
+            assertEq(2, closed.size());
+            assertEq(ZMQ_EVENT_CLOSED, closed.popFrame().readi2(0));
+            assertEq(closed_endpoint, closed.popStr());
+        }
 
         # try connecting first, sending a message and then binding and reading the message
         string endpoint = writer.endpoint();
@@ -572,6 +576,24 @@ class ZmqTest inherits QUnit::Test {
         assertEq(0, msg.size());
         assertEq(0, msg.contentSize());
         assertEq(NOTHING, msg.popStr());
+    }
+
+    # Keep the receiving monitor alive until the I/O thread has stopped sending.
+    # This cleanup also runs when a preceding test assertion throws.
+    closeMonitoredSocket(ZSocket socket, ZSocketPair monitor) {
+        delete socket;
+        for (int i = 0; i < 3; ++i) {
+            monitor.waitRead(10s);
+            ZMsg event = monitor.recvMsg();
+            assertEq(2, event.size());
+            int code = event.popFrame().readi2(0);
+            if (code == ZMQ_EVENT_MONITOR_STOPPED) {
+                assertEq(NOTHING, event.popStr());
+                return;
+            }
+            assertEq(ZMQ_EVENT_CLOSED, code);
+        }
+        throw "MONITOR-TEST-ERROR", "monitor did not stop after closing its socket";
     }
 
     zSocketPubSubTest() {

@@ -80,6 +80,7 @@ class ZmqComprehensiveTest inherits QUnit::Test {
 
         # Corner cases - Socket Connections
         addTestCase("corner: reconnect after unbind", \cornerReconnectAfterUnbindTest());
+        addTestCase("corner: monitor cleanup after exception", \monitorExceptionCleanupTest());
         addTestCase("corner: bind port 0 multiple times", \cornerBindPort0MultipleTest());
         addTestCase("corner: connect before server ready", \cornerConnectBeforeServerTest());
 
@@ -481,8 +482,11 @@ class ZmqComprehensiveTest inherits QUnit::Test {
         assertTrue(port > 0);
 
         string endpoint = "tcp://127.0.0.1:" + port;
-        sock.monitor(ZMQ_EVENT_CLOSED, "inproc://rebind-close");
+        sock.monitor(ZMQ_EVENT_CLOSED | ZMQ_EVENT_MONITOR_STOPPED, "inproc://rebind-close");
         ZSocketPair close_monitor(zctx, "inproc://rebind-close");
+        on_exit {
+            closeMonitoredSocket(sock, close_monitor);
+        }
         sock.unbind(endpoint);
 
         # The I/O thread reports CLOSED only after releasing the listener fd.
@@ -492,6 +496,59 @@ class ZmqComprehensiveTest inherits QUnit::Test {
         assertEq(ZMQ_EVENT_CLOSED, closed.popFrame().readi2(0));
         assertEq(endpoint, closed.popStr());
         assertEq(port, sock.bind(endpoint));
+    }
+
+    # A disconnected monitor receiver can block the I/O thread's next event.
+    # Join monitor shutdown on success and on assertion/exception paths.
+    closeMonitoredSocket(ZSocket socket, ZSocketPair monitor) {
+        delete socket;
+        for (int i = 0; i < 3; ++i) {
+            monitor.waitRead(10s);
+            ZMsg event = monitor.recvMsg();
+            assertEq(2, event.size());
+            int code = event.popFrame().readi2(0);
+            if (code == ZMQ_EVENT_MONITOR_STOPPED) {
+                assertEq(NOTHING, event.popStr());
+                return;
+            }
+            assertEq(ZMQ_EVENT_CLOSED, code);
+        }
+        throw "MONITOR-TEST-ERROR", "monitor did not stop after closing its socket";
+    }
+
+    monitorExceptionCleanupTest() {
+        for (int phase = 0; phase < 3; ++phase) {
+            assertThrows("MONITOR-FIXTURE-ERROR", sub (int phase) {
+                ZSocketPush socket(zctx, "@tcp://127.0.0.1:*");
+                string endpoint = socket.endpoint();
+                string monitor_endpoint = "inproc://exception-monitor-" + phase;
+                socket.monitor(ZMQ_EVENT_CLOSED | ZMQ_EVENT_MONITOR_STOPPED, monitor_endpoint);
+                ZSocketPair monitor(zctx, monitor_endpoint);
+                on_exit {
+                    closeMonitoredSocket(socket, monitor);
+                }
+                if (phase > 0) {
+                    socket.unbind(endpoint);
+                    monitor.waitRead(10s);
+                    ZMsg closed = monitor.recvMsg();
+                    assertEq(ZMQ_EVENT_CLOSED, closed.popFrame().readi2(0));
+                    assertEq(endpoint, closed.popStr());
+                }
+                if (phase == 2) {
+                    assertTrue(socket.bind(endpoint) > 0);
+                }
+                throw "MONITOR-FIXTURE-ERROR", "exercise cleanup before/after unbind and rebind";
+            }, phase);
+
+            # Cleanup must leave the shared I/O thread able to serve new sockets.
+            ZSocketPush writer(zctx, "@tcp://127.0.0.1:*");
+            ZSocketPull reader(zctx, ">" + writer.endpoint());
+            writer.setSendTimeout(5s);
+            reader.setRecvTimeout(5s);
+            string payload = "after-exception-" + phase;
+            writer.send(payload);
+            assertEq(payload, reader.recvMsg().popStr());
+        }
     }
 
     cornerBindPort0MultipleTest() {
