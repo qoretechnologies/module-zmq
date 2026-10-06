@@ -51,6 +51,14 @@ address or reporting the final denial. The sandbox regression repeats rejected
 bind/connect operations, checks permitted operations and malformed endpoints,
 and rejects unexpected standard-error output. Network policy is unchanged.
 
+When testing alongside the optional XML module, the standalone sandbox checker
+accepts ``--allow-qunit-xml-fallback``. This explicitly permits one exact QUnit
+AOT source-selection warning when XML becomes available after QUnit compilation.
+The warning remains visible. All other stderr and nonzero Qore exit statuses
+still fail. Validate the allowance and its negative cases with::
+
+    python3 -B -W error test/test_sandbox_error_runner.py -v
+
 The private CZMQ archive retains assertion expressions in optimized builds:
 CZMQ performs required hash-table resizing inside those expressions. The
 module itself keeps the distribution's release flags. A native regression
