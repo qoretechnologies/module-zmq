@@ -42,3 +42,6 @@ CZMQ performs required hash-table resizing inside those expressions. The
 module itself keeps the distribution's release flags. A native regression
 checks 10,000 insertions, actual rehash callbacks, duplicate-key rejection,
 lookups and deletion against the linked private archive.
+
+Release 3 retains each vendor's license path while hard-linking byte-identical
+license payloads, eliminating duplicate-file package lint without omitting notices.

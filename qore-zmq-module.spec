@@ -12,7 +12,7 @@
 %bcond_without docs
 Name: qore-zmq-module
 Version: 1.2.0
-Release: 2%{?dist}
+Release: 3%{?dist}
 Summary: ZeroMQ messaging and draft socket APIs for Qore
 License: MIT AND LGPL-2.1-or-later AND MPL-2.0 AND BSD-3-Clause AND BSD-2-Clause AND Beerware
 URL: https://github.com/qoretechnologies/module-zmq
@@ -38,11 +38,11 @@ BuildRequires: python3
 %endif
 %if %{with docs}
 BuildRequires: doxygen
+%endif
 %if 0%{?suse_version}
 BuildRequires: util-linux
 %else
 BuildRequires: util-linux-core
-%endif
 %endif
 
 %description
@@ -99,6 +99,7 @@ done
 # Retain notices for the small third-party sources compiled into the libraries.
 sed -n '1,/\*\//p' libzmq/external/sha1/sha1.c > %{buildroot}%{_licensedir}/%{name}/libzmq/LICENSE.sha1.txt
 sed -n '1,/\*\//p' czmq/src/foreign/slre/slre.h > %{buildroot}%{_licensedir}/%{name}/czmq/LICENSE.slre.txt
+hardlink -t -O %{buildroot}%{_licensedir}/%{name}
 chmod 755 %{buildroot}%{_libdir}/qore-modules/zmq-api-*.qmod
 %if %{with docs}
 install -d %{buildroot}%{_docdir}/%{name}-doc
@@ -136,6 +137,9 @@ done
 %doc %{_docdir}/%{name}-doc/
 %endif
 %changelog
+* Tue Oct 06 2026 David Nichols <david@qore.org> - 1.2.0-3
+- Hard-link identical vendor license payloads while retaining both notice paths.
+
 * Tue Oct 06 2026 David Nichols <david@qore.org> - 1.2.0-2
 - Consume temporary address-probe exceptions while retaining caller-visible denial.
 - Verify repeated denied and allowed operations with no abandoned-error output.
