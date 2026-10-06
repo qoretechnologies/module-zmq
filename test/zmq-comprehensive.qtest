@@ -481,27 +481,17 @@ class ZmqComprehensiveTest inherits QUnit::Test {
         assertTrue(port > 0);
 
         string endpoint = "tcp://127.0.0.1:" + port;
+        sock.monitor(ZMQ_EVENT_CLOSED, "inproc://rebind-close");
+        ZSocketPair close_monitor(zctx, "inproc://rebind-close");
         sock.unbind(endpoint);
 
-        # Small delay for port to be released
-        usleep(100ms);
-
-        # Rebind to same port should work
-        int port2;
-        int tries = 0;
-        while (True) {
-            try {
-                port2 = sock.bind(endpoint);
-                break;
-            } catch (hash<ExceptionInfo> ex) {
-                if (ex.arg == EADDRINUSE && ++tries < 5) {
-                    usleep(100ms);
-                    continue;
-                }
-                rethrow;
-            }
-        }
-        assertEq(port, port2);
+        # The I/O thread reports CLOSED only after releasing the listener fd.
+        close_monitor.waitRead(10s);
+        ZMsg closed = close_monitor.recvMsg();
+        assertEq(2, closed.size());
+        assertEq(ZMQ_EVENT_CLOSED, closed.popFrame().readi2(0));
+        assertEq(endpoint, closed.popStr());
+        assertEq(port, sock.bind(endpoint));
     }
 
     cornerBindPort0MultipleTest() {

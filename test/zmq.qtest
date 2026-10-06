@@ -540,7 +540,17 @@ class ZmqTest inherits QUnit::Test {
         # now we can send another message
         writer.send(HelloWorld);
 
+        # unbind queues listener teardown on the I/O thread. Observe its closed
+        # event before reusing the same port; deleting the socket is asynchronous.
+        string closed_endpoint = reader.endpoint();
+        reader.monitor(ZMQ_EVENT_CLOSED, "inproc://req-rep-close");
+        ZSocketPair close_monitor(zctx, "inproc://req-rep-close");
         assertEq(NOTHING, reader.unbind(reader.endpoint()));
+        close_monitor.waitRead(10s);
+        ZMsg closed = close_monitor.recvMsg();
+        assertEq(2, closed.size());
+        assertEq(ZMQ_EVENT_CLOSED, closed.popFrame().readi2(0));
+        assertEq(closed_endpoint, closed.popStr());
         delete reader;
 
         # try connecting first, sending a message and then binding and reading the message
@@ -553,22 +563,7 @@ class ZmqTest inherits QUnit::Test {
 
         reader = new ZSocketRep(zctx);
 
-        {
-            int tries = 0;
-            while (True) {
-                try {
-                    reader.bind("tcp://127.0.0.1:" + port);
-                    break;
-                } catch (hash<ExceptionInfo> ex) {
-                    if (ex.err == "ZSOCKET-BIND-ERROR" && ex.arg == EADDRINUSE && (++tries < 3)) {
-                        stderr.printf("%s: %s; retrying in 1 second...\n", ex.err, ex.desc);
-                        sleep(1);
-                        continue;
-                    }
-                    rethrow;
-                }
-            }
-        }
+        assertEq(port, reader.bind("tcp://127.0.0.1:" + port));
 
         msg = reader.recvMsg();
         assertEq(1, msg.size());

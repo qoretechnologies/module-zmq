@@ -12,7 +12,7 @@
 %bcond_without docs
 Name: qore-zmq-module
 Version: 1.2.0
-Release: 3%{?dist}
+Release: 4%{?dist}
 Summary: ZeroMQ messaging and draft socket APIs for Qore
 License: MIT AND LGPL-2.1-or-later AND MPL-2.0 AND BSD-3-Clause AND BSD-2-Clause AND Beerware
 URL: https://github.com/qoretechnologies/module-zmq
@@ -137,6 +137,9 @@ done
 %doc %{_docdir}/%{name}-doc/
 %endif
 %changelog
+* Tue Oct 06 2026 David Nichols <david@qore.org> - 1.2.0-4
+- Observe listener-close events before rebinding ports in regression fixtures.
+
 * Tue Oct 06 2026 David Nichols <david@qore.org> - 1.2.0-3
 - Hard-link identical vendor license payloads while retaining both notice paths.
 

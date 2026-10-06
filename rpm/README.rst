@@ -1,6 +1,14 @@
 RPM packaging
 =============
 
+Copyright 2026 Qore Technologies, s.r.o.
+
+Release 4 makes the TCP rebind fixtures synchronize with ZeroMQ's
+``ZMQ_EVENT_CLOSED`` notification. ``unbind()`` queues listener teardown; the
+notification follows the operating-system close. Both fixtures verify the
+event and endpoint before immediately rebinding the same port. No sleep,
+bind retry, timeout increase or production behavior change is required.
+
 The multi-distribution recipe targets the Qore 3 SDK on Fedora, Enterprise
 Linux and openSUSE. It builds the complete CLIENT/SERVER and RADIO/DISH draft
 APIs. The required draft implementations are not supplied by ordinary
