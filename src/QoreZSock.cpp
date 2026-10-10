@@ -124,24 +124,33 @@ static bool checkTcpUdpAccess(QoreSandboxManager* sm, const char* hostport, int 
         }
     }
 
-    // Check access for resolved addresses
+    // Check access for resolved addresses; access is allowed if any address is allowed, otherwise the denial of the
+    // first address is raised
     bool allowed = false;
+    ExceptionSink denied;
     for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {
         ExceptionSink tmp;
         if (is_bind) {
-            if (sm->network().checkBind(ai->ai_addr, ai->ai_addrlen, proto, &tmp)) {
-                allowed = true;
-                break;
-            }
+            allowed = sm->network().checkBind(ai->ai_addr, ai->ai_addrlen, proto, &tmp);
         } else {
-            if (sm->checkNetworkAccess(ai->ai_addr, ai->ai_addrlen, proto, &tmp)) {
-                allowed = true;
-                break;
-            }
+            allowed = sm->checkNetworkAccess(ai->ai_addr, ai->ai_addrlen, proto, &tmp);
+        }
+        if (allowed) {
+            break;
+        }
+        // a sink that is destroyed with an exception reports it as unhandled, so each denial is kept or cleared
+        if (!denied) {
+            denied.assimilate(tmp);
+        } else {
+            tmp.clear();
         }
     }
     freeaddrinfo(res);
-    if (!allowed) {
+    if (allowed) {
+        denied.clear();
+    } else if (denied) {
+        xsink->assimilate(denied);
+    } else {
         xsink->raiseException("NETWORK-ACCESS-DENIED",
             "%s access denied by security policy", is_bind ? "bind" : "connect");
     }

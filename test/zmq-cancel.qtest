@@ -25,12 +25,19 @@ class ZmqCancelTest inherits QUnit::Test {
         addTestCase("a cancelled thread ends ZSocket::waitRead()", \cancelWaitRead());
         addTestCase("an interrupted Program ends ZSocket::poll()", \interruptStaticPoll());
         addTestCase("the timeout still ends a wait", \pollTimeout());
+        addTestCase("a cancelled thread ends a receive", \cancelRecv());
+        addTestCase("a cancelled thread ends a receive on a CLIENT socket", \cancelRecvClient());
+        addTestCase("an interrupted Program ends a receive", \interruptRecv());
+        addTestCase("a receive returns the messages and applies the timeouts", \recvTest());
         addTestCase("a sandboxed Program binds a wildcard port", \sandboxedWildcardBind());
         set_return_value(main());
     }
 
     #! runs the given wait in a thread, cancels the thread, and returns the exception and the time to the end
-    private hash<auto> cancelWait(code wait) {
+    /** @param wait the wait, called with the socket
+        @param create creates the socket that the wait uses; a PULL socket bound to a local port by default
+    */
+    private hash<auto> cancelWait(code wait, *code create) {
         Queue started();
         Queue done();
         int tid = background sub () {
@@ -38,7 +45,11 @@ class ZmqCancelTest inherits QUnit::Test {
             try {
                 # the sockets belong to the thread that creates them
                 ZContext zctx();
-                ZSocketPull reader(zctx, "@tcp://127.0.0.1:*");
+                ZSocket reader = create
+                    ? create(zctx)
+                    : new ZSocketPull(zctx, "@tcp://127.0.0.1:*");
+                # a receive that is not cancelled ends only with this timeout
+                reader.setRecvTimeout(WaitTimeout);
                 started.push(True);
                 wait(reader);
                 rv.err = "NONE";
@@ -120,7 +131,9 @@ class ZmqCancelTest inherits QUnit::Test {
                 if (allow) {
                     assertRegex("^tcp://127\\.0\\.0\\.1:[0-9]+$", p.callFunction("run", endpoint), endpoint);
                 } else {
-                    assertThrows("NETWORK-ACCESS-DENIED", \p.callFunction(), ("run", endpoint), endpoint);
+                    # the denial of the address is raised
+                    assertThrows("NETWORK-ACCESS-DENIED", "denied by security policy \\(default deny\\)",
+                        \p.callFunction(), ("run", endpoint), endpoint);
                 }
             }
         }
@@ -139,4 +152,143 @@ class ZmqCancelTest inherits QUnit::Test {
         us = clock_get_monotonic_us() - start;
         assertGe(200000, us, "the timeout is applied");
     }
+
+    cancelRecv() {
+        hash<string, code> waits = {
+            "recvMsg": sub (ZSocket reader) { reader.recvMsg(); },
+            "recvFrame": sub (ZSocket reader) { reader.recvFrame(); },
+            "tryRecvMsg": sub (ZSocket reader) { reader.tryRecvMsg(WaitTimeout); },
+            "tryRecvFrame": sub (ZSocket reader) { reader.tryRecvFrame(WaitTimeout); },
+        };
+        foreach hash<auto> i in (waits.pairIterator()) {
+            hash<auto> rv = cancelWait(i.value);
+            assertEq("THREAD-CANCELLED", rv.err, i.key + ": " + rv.desc);
+            assertLt(MaxCancelUs, rv.us, i.key + " ends at once");
+        }
+    }
+
+    cancelRecvClient() {
+        # a CLIENT socket connected to a server that never sends anything
+        ZContext zctx();
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        string endpoint = server.endpoint();
+        code create = ZSocket sub (ZContext ctx) {
+            return new ZSocketClient(ctx, endpoint);
+        };
+        hash<string, code> waits = {
+            "recvMsg": sub (ZSocket reader) { reader.recvMsg(); },
+            "tryRecvMsg": sub (ZSocket reader) { reader.tryRecvMsg(WaitTimeout); },
+        };
+        foreach hash<auto> i in (waits.pairIterator()) {
+            hash<auto> rv = cancelWait(i.value, create);
+            assertEq("THREAD-CANCELLED", rv.err, i.key + ": " + rv.desc);
+            assertLt(MaxCancelUs, rv.us, i.key + " ends at once");
+        }
+    }
+
+    interruptRecv() {
+        SandboxManager sm();
+        sm.setNetworkDefaultPolicy(True);
+        Program p(PO_NEW_STYLE);
+        p.setSandboxManager(sm);
+        p.loadModule("zmq");
+        p.parse(sprintf("sub run(Queue started) { ZContext zctx(); ZSocketPull reader(zctx, \"@tcp://127.0.0.1:*\"); "
+            "started.push(True); reader.tryRecvMsg(%d); }", WaitTimeout.durationMilliseconds()), "zmq-interrupt-recv");
+        Queue started();
+        Queue done();
+        background sub () {
+            hash<auto> rv;
+            try {
+                p.callFunction("run", started);
+                rv.err = "NONE";
+            } catch (hash<ExceptionInfo> ex) {
+                rv.err = ex.err;
+                rv.desc = ex.desc;
+                # the wait was not reached if the call failed before it
+                started.push(False);
+            }
+            rv.end = clock_get_monotonic_us();
+            done.push(rv);
+        }();
+        assertTrue(started.get(), "the sandboxed Program reaches the receive");
+        int start = clock_get_monotonic_us();
+        sm.requestInterrupt();
+        hash<auto> rv = done.get();
+        assertEq("PROGRAM-INTERRUPTED", rv.err, rv.desc);
+        assertLt(MaxCancelUs, rv.end - start);
+    }
+
+    recvTest() {
+        ZContext zctx();
+        ZSocketPull reader(zctx, "@tcp://127.0.0.1:*");
+        ZSocketPush writer(zctx, ">" + reader.endpoint());
+
+        # messages that are sent are received whole, by each receive method
+        writer.send("a", "b");
+        ZMsg msg = reader.recvMsg();
+        assertEq(2, msg.size());
+        assertEq("a", msg.popStr());
+        assertEq("b", msg.popStr());
+        writer.send("c");
+        assertEq("c", reader.recvFrame().bin().toString());
+        writer.send("d", "e");
+        *ZMsg tmsg = reader.tryRecvMsg(WaitTimeout);
+        assertEq(("d", "e"), (tmsg.popStr(), tmsg.popStr()));
+        writer.send("f");
+        assertEq("f", reader.tryRecvFrame(WaitTimeout).bin().toString());
+
+        # the receive timeout set on the socket ends a receive, and is not changed by the receives with a timeout
+        reader.setRecvTimeout(200ms);
+        foreach string meth in ("recvMsg", "recvFrame") {
+            int start = clock_get_monotonic_us();
+            assertThrows("ZSOCKET-TIMEOUT-ERROR", \call_object_method(), (reader, meth), meth);
+            int us = clock_get_monotonic_us() - start;
+            assertGe(200000, us, meth + " waits for the timeout");
+            assertLt(200000 + MaxCancelUs, us, meth + " ends with the timeout");
+        }
+        foreach string meth in ("tryRecvMsg", "tryRecvFrame") {
+            int start = clock_get_monotonic_us();
+            assertNothing(call_object_method(reader, meth, 100ms), meth);
+            int us = clock_get_monotonic_us() - start;
+            assertGe(100000, us, meth + " waits for the timeout");
+            assertLt(100000 + MaxCancelUs, us, meth + " ends with the timeout");
+            assertEq(200, reader.getOption(ZMQ_RCVTIMEO), meth + " keeps the receive timeout of the socket");
+        }
+        # a zero timeout does not wait
+        assertNothing(reader.tryRecvMsg(0));
+        writer.send("g");
+        # the message is received when it arrives, before the timeout
+        assertEq("g", reader.tryRecvFrame(WaitTimeout).bin().toString());
+
+        # a receive that the socket does not allow in its state fails at once, without waiting for the timeout
+        ZSocketRep rep(zctx, "", "@tcp://127.0.0.1:*");
+        ZSocketReq req(zctx, "", ">" + rep.endpoint());
+        req.setRecvTimeout(WaitTimeout);
+        foreach string meth in ("recvMsg", "recvFrame", "tryRecvMsg", "tryRecvFrame") {
+            int start = clock_get_monotonic_us();
+            assertThrows(meth =~ /Msg$/ ? "ZSOCKET-RECVMSG-ERROR" : "ZSOCKET-RECVFRAME-ERROR",
+                \call_object_method_args(), (req, meth, meth =~ /^try/ ? (WaitTimeout,) : ()), meth);
+            assertLt(MaxCancelUs, clock_get_monotonic_us() - start, meth + " fails at once");
+        }
+        # a receive on a socket type that cannot receive fails at once
+        int start = clock_get_monotonic_us();
+        assertThrows("ZSOCKET-RECVMSG-ERROR", \writer.recvMsg());
+        assertLt(MaxCancelUs, clock_get_monotonic_us() - start, "recvMsg on a PUSH socket fails at once");
+
+        # a CLIENT socket receives a message sent by its server
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+        client.send("hello");
+        ZMsg req_msg = server.recvMsg();
+        assertEq("hello", req_msg.popStr());
+        server.send("reply");
+        assertEq("reply", client.recvMsg().popStr());
+        server.send("again");
+        assertEq("again", client.tryRecvMsg(WaitTimeout).popStr());
+        # a CLIENT socket's receives end with their timeouts
+        assertNothing(client.tryRecvMsg(100ms));
+        client.setRecvTimeout(100ms);
+        assertThrows("ZSOCKET-TIMEOUT-ERROR", \client.recvMsg());
+    }
+
 }

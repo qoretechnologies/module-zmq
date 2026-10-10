@@ -22,6 +22,7 @@
 #include "zmq-module.h"
 
 #include <cerrno>
+#include <climits>
 #include <vector>
 
 static void zmq_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink);
@@ -126,10 +127,27 @@ static void zmq_module_delete() {
 }
 
 // module library functions
+int64 qore_zmq_deadline(int timeout_ms) {
+    return timeout_ms >= 0 ? q_clock_getmicros_monotonic() + static_cast<int64>(timeout_ms) * 1000 : -1;
+}
+
+int qore_zmq_remaining_ms(int64 deadline) {
+    if (deadline < 0) {
+        return -1;
+    }
+    int64 remaining = deadline - q_clock_getmicros_monotonic();
+    if (remaining <= 0) {
+        return 0;
+    }
+    // rounded up, so that the wait does not end before the deadline
+    int64 ms = (remaining + 999) / 1000;
+    return ms > INT_MAX ? INT_MAX : static_cast<int>(ms);
+}
+
 int qore_zmq_poll(zmq_pollitem_t* items, int nitems, int timeout_ms, const char* operation,
         ExceptionSink* xsink) {
     // the absolute deadline in microseconds (monotonic), or -1 for no timeout
-    int64 deadline = timeout_ms >= 0 ? q_clock_getmicros_monotonic() + static_cast<int64>(timeout_ms) * 1000 : -1;
+    int64 deadline = qore_zmq_deadline(timeout_ms);
 #ifdef _QORE_HAS_CANCELLABLE_POLL
     QoreCancelWakeupHelper cwh(xsink, operation);
     if (*xsink) {
@@ -147,12 +165,7 @@ int qore_zmq_poll(zmq_pollitem_t* items, int nitems, int timeout_ms, const char*
         pitems.push_back(w);
     }
     while (true) {
-        long wait_ms = -1;
-        if (deadline >= 0) {
-            int64 remaining = deadline - q_clock_getmicros_monotonic();
-            wait_ms = remaining > 0 ? static_cast<long>((remaining + 999) / 1000) : 0;
-        }
-        int rc = zmq_poll(pitems.data(), static_cast<int>(pitems.size()), wait_ms);
+        int rc = zmq_poll(pitems.data(), static_cast<int>(pitems.size()), qore_zmq_remaining_ms(deadline));
         if (rc < 0) {
             if (errno == EINTR) {
                 continue;

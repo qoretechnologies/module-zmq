@@ -54,6 +54,12 @@ DLLLOCAL void zmq_error(ExceptionSink* xsink, const char* err, const char* desc_
 DLLLOCAL int qore_zmq_poll(zmq_pollitem_t* items, int nitems, int timeout_ms, const char* operation,
         ExceptionSink* xsink);
 
+//! returns the monotonic deadline in microseconds for a timeout in milliseconds, or -1 for a negative timeout
+DLLLOCAL int64 qore_zmq_deadline(int timeout_ms);
+
+//! returns the milliseconds until the given deadline (0 if it has passed), or -1 if there is no deadline (-1)
+DLLLOCAL int qore_zmq_remaining_ms(int64 deadline);
+
 // for hashdecls
 DLLLOCAL extern const TypedHashDecl* hashdeclZmqVersionInfo;
 DLLLOCAL extern const TypedHashDecl* hashdeclZmqPollInfo;

@@ -7,12 +7,19 @@
     @section zmq_1_2_0 zmq Module Version 1.2.0
 
     - a thread waiting in @ref Qore::ZMQ::ZSocket::poll() "ZSocket::poll()",
-      @ref Qore::ZMQ::ZSocket::waitRead() "ZSocket::waitRead()", or
-      @ref Qore::ZMQ::ZSocket::waitWrite() "ZSocket::waitWrite()" ends the wait as soon as it is cancelled or its
-      %Qore \c Program is interrupted; @ref Qore::ZMQ::ZSocket::poll() "ZSocket::poll()" could not be interrupted
-      before, and the other waits ended only up to half a second after the request
+      @ref Qore::ZMQ::ZSocket::waitRead() "ZSocket::waitRead()",
+      @ref Qore::ZMQ::ZSocket::waitWrite() "ZSocket::waitWrite()",
+      @ref Qore::ZMQ::ZSocket::recvMsg() "ZSocket::recvMsg()",
+      @ref Qore::ZMQ::ZSocket::recvFrame() "ZSocket::recvFrame()",
+      @ref Qore::ZMQ::ZSocket::tryRecvMsg() "ZSocket::tryRecvMsg()", or
+      @ref Qore::ZMQ::ZSocket::tryRecvFrame() "ZSocket::tryRecvFrame()" ends the wait as soon as it is cancelled
+      or its %Qore \c Program is interrupted; @ref Qore::ZMQ::ZSocket::poll() "ZSocket::poll()",
+      @ref Qore::ZMQ::ZSocket::recvFrame() "ZSocket::recvFrame()", and the \c tryRecv*() methods could not be
+      interrupted before, and the other waits ended only up to half a second after the request
     - fixed binding an endpoint with a wildcard port (ex: \c "@tcp://127.0.0.1:*") in a sandboxed \c Program,
       which failed with \c ZMQ-ENDPOINT-ERROR because the sandbox check resolved the port \c "*" as a service name
+    - a bind or connect that the sandbox denies raises the denial of the address, and no longer reports an
+      unhandled exception for each address denied
 
     - corrected subscription and send-method links and wildcard-address examples
       so the complete reference builds with strict Doxygen checks
