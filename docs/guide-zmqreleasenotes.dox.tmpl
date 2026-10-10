@@ -20,6 +20,11 @@
       which failed with \c ZMQ-ENDPOINT-ERROR because the sandbox check resolved the port \c "*" as a service name
     - a bind or connect that the sandbox denies raises the denial of the address, and no longer reports an
       unhandled exception for each address denied
+    - the \c send() methods of @ref Qore::ZMQ::ZSocket "ZSocket" wait until the socket can queue the message, up to
+      the send timeout, and end as soon as the thread is cancelled or its %Qore \c Program is interrupted; they could
+      not be interrupted before.  A send on a @ref Qore::ZMQ::ZSocketServer "ZSocketServer" whose peer cannot accept
+      the message still blocks until the send timeout, as libzmq has no writability signal for a single peer of a
+      SERVER socket
 
     - corrected subscription and send-method links and wildcard-address examples
       so the complete reference builds with strict Doxygen checks

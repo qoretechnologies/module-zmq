@@ -69,20 +69,148 @@ private:
     ExceptionSink* xsink;
 };
 
-static void send_empty_msg(void* zsock, ExceptionSink* xsink) {
+// waits until the socket can queue a message or the deadline passes
+/* the wait ends at once when the thread is cancelled or its Program is interrupted
+
+    @return 0 if the socket can queue a message, 1 if the deadline passed, -1 if an exception was raised
+*/
+static int zsock_wait_output(QoreZSock* zsock, int64 deadline, const char* err, const char* meth,
+        ExceptionSink* xsink) {
+    zmq_pollitem_t item = { **zsock, 0, ZMQ_POLLOUT, 0 };
+    int rc = qore_zmq_poll(&item, 1, qore_zmq_remaining_ms(deadline), "ZeroMQ send", xsink);
+    if (rc == QORE_ZMQ_POLL_CANCELLED) {
+        return -1;
+    }
+    if (rc < 0) {
+        zmq_error(xsink, err, "error in zmq_poll() in %s()", meth);
+        return -1;
+    }
+    return rc ? 0 : 1;
+}
+
+// returns the send timeout of the socket in milliseconds
+/* the timeout of CLIENT and SERVER sockets is cached, as reading ZMQ_SNDTIMEO is not thread-safe
+
+    @return 0 for OK, -1 if an exception was raised
+*/
+static int zsock_get_send_timeout(QoreZSock* zsock, int& timeout_ms, const char* err, const char* meth,
+        ExceptionSink* xsink) {
+    int type = zsock->getType();
+    if (type == ZMQ_CLIENT || type == ZMQ_SERVER) {
+        timeout_ms = zsock->getSendTimeoutMs();
+        return 0;
+    }
+    size_t len = sizeof(timeout_ms);
+    if (zsock->getSocketOption(ZMQ_SNDTIMEO, &timeout_ms, &len)) {
+        zmq_error(xsink, err, "error getting send timeout in %s()", meth);
+        return -1;
+    }
+    return 0;
+}
+
+// sends a message part or a whole message with the given call, which must not block
+/* when the socket cannot queue it, waits until the socket can queue a message or the deadline passes and tries
+    again; a send that the socket does not allow in its state fails at once
+
+    SERVER sockets must not use this: libzmq always reports them writable, as it has no writability signal for a
+    single peer, so a send to a peer whose queue is full would be tried again without waiting
+
+    @param send_nowait sends without blocking (with ZMQ_DONTWAIT) and returns a negative value with errno set if
+    the data could not be sent
+
+    @return 0 if sent, -1 if an exception was raised, 1 if the send failed: errno is set, EAGAIN if the deadline
+    passed
+*/
+template <typename F>
+static int zsock_send_wait(QoreZSock* zsock, F send_nowait, int64 deadline, const char* err, const char* meth,
+        ExceptionSink* xsink) {
+    assert(zsock->getType() != ZMQ_SERVER);
     while (true) {
-        int rc = zsock_send(zsock, "b", nullptr, 0);
-        if (rc) {
-            if (errno == EINTR) {
-                continue;
-            }
-            if (errno == EAGAIN) {
-                zmq_error(xsink, "ZSOCKET-TIMEOUT-ERROR", "timeout in ZSocket::send()");
-            } else {
-                zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error sending empty message");
-            }
+        if (send_nowait() >= 0) {
+            return 0;
         }
-        break;
+        if (errno == EINTR) {
+            continue;
+        }
+        if (errno != EAGAIN) {
+            return 1;
+        }
+        int rc = zsock_wait_output(zsock, deadline, err, meth, xsink);
+        if (rc) {
+            if (rc > 0) {
+                errno = EAGAIN;
+            }
+            return rc;
+        }
+    }
+}
+
+// returns the send deadline of the socket, or -2 if an exception was raised
+static int64 zsock_send_deadline(QoreZSock* zsock, const char* err, const char* meth, ExceptionSink* xsink) {
+    int timeout_ms;
+    if (zsock_get_send_timeout(zsock, timeout_ms, err, meth, xsink)) {
+        return -2;
+    }
+    return qore_zmq_deadline(timeout_ms);
+}
+
+// sends a message on a socket that is not a CLIENT or SERVER socket; the message is destroyed when it is sent
+/* the first part is sent when the socket can queue the message; the other parts of a message are always queued
+    with the first one
+
+    @return 0 if sent, -1 if an exception was raised, 1 if the send failed: errno is set, EAGAIN if the deadline
+    passed
+*/
+static int zsock_send_zmsg(QoreZSock* zsock, zmsg_t** msgp, int64 deadline, const char* err, const char* meth,
+        ExceptionSink* xsink) {
+    zmsg_t* msg = *msgp;
+    bool first = true;
+    while (zmsg_size(msg)) {
+        int flags = zmsg_size(msg) > 1 ? ZFRAME_MORE : 0;
+        zframe_t* frame = zmsg_first(msg);
+        int rc;
+        if (first) {
+            // the frame stays in the message until it has been sent
+            rc = zsock_send_wait(zsock, [&]() { return zframe_send(&frame, **zsock, flags | ZFRAME_REUSE
+                | ZFRAME_DONTWAIT); }, deadline, err, meth, xsink);
+        } else {
+            while ((rc = zframe_send(&frame, **zsock, flags | ZFRAME_REUSE)) && errno == EINTR) {
+            }
+            rc = rc ? 1 : 0;
+        }
+        if (rc) {
+            return rc;
+        }
+        first = false;
+        frame = zmsg_pop(msg);
+        zframe_destroy(&frame);
+    }
+    zmsg_destroy(msgp);
+    return 0;
+}
+
+// sends an empty message
+static void send_empty_msg(QoreZSock* zsock, ExceptionSink* xsink) {
+    int rc;
+    if (zsock->getType() == ZMQ_SERVER) {
+        // a SERVER socket has no writability signal for a peer: the send blocks until the send timeout
+        while ((rc = zmq_send(**zsock, nullptr, 0, 0)) < 0 && errno == EINTR) {
+        }
+        rc = rc < 0 ? 1 : 0;
+    } else {
+        int64 deadline = zsock_send_deadline(zsock, "ZSOCKET-SEND-ERROR", "ZSocket::send", xsink);
+        if (deadline == -2) {
+            return;
+        }
+        rc = zsock_send_wait(zsock, [zsock]() { return zmq_send(**zsock, nullptr, 0, ZMQ_DONTWAIT); }, deadline,
+            "ZSOCKET-SEND-ERROR", "ZSocket::send", xsink);
+    }
+    if (rc > 0) {
+        if (errno == EAGAIN) {
+            zmq_error(xsink, "ZSOCKET-TIMEOUT-ERROR", "timeout in ZSocket::send()");
+        } else {
+            zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error sending empty message");
+        }
     }
 }
 
@@ -2236,6 +2364,13 @@ zsock.send(msg);
     @throw ZSOCKET-SEND-ERROR thrown if an error occurs during the call
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
+    @throw THREAD-CANCELLED the thread was cancelled while waiting
+    @throw PROGRAM-INTERRUPTED the \c Program was interrupted while waiting
+    @note a send waits until the socket can queue the message, up to the send timeout (see setSendTimeout()), and ends
+    as soon as the thread is cancelled or its \c Program is interrupted, except on a
+    @ref Qore::ZMQ::ZSocketServer "ZSocketServer": libzmq has no signal that a single peer of a SERVER socket can
+    accept a message, so a send on a SERVER socket whose peer's queue is full blocks until the message is queued or
+    the send timeout expires, and cannot be cancelled; set the send timeout to bound it
 */
 nothing ZSocket::send(Qore::ZMQ::ZMsg[QoreZMsg] msg) [flags=NAMED_ARGS] {
     {
@@ -2297,16 +2432,25 @@ nothing ZSocket::send(Qore::ZMQ::ZMsg[QoreZMsg] msg) [flags=NAMED_ARGS] {
                 }
             }
 
-            while (true) {
-                int rc = zmq_msg_send(&zmsg, **zsock, 0);
-                if (rc < 0) {
-                    if (errno == EINTR)
-                        continue;
-                    zmq_msg_close(&zmsg);
-                    zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error in ZSocket::send(%s)", obj_msg->getClassName());
-                    break;
+            int rc;
+            if (sock_type == ZMQ_SERVER) {
+                // a SERVER socket has no writability signal for a peer: the send blocks until the send timeout
+                while ((rc = zmq_msg_send(&zmsg, **zsock, 0)) < 0 && errno == EINTR) {
                 }
-                break;
+                rc = rc < 0 ? 1 : 0;
+            } else {
+                int64 deadline = zsock_send_deadline(zsock, "ZSOCKET-SEND-ERROR", "ZSocket::send", xsink);
+                rc = deadline == -2
+                    ? -1
+                    : zsock_send_wait(zsock, [&]() { return zmq_msg_send(&zmsg, **zsock, ZMQ_DONTWAIT); }, deadline,
+                        "ZSOCKET-SEND-ERROR", "ZSocket::send", xsink);
+            }
+            if (rc) {
+                // the message is still owned by the caller when it was not sent
+                if (rc > 0) {
+                    zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error in ZSocket::send(%s)", obj_msg->getClassName());
+                }
+                zmq_msg_close(&zmsg);
             }
             // After sending the serialized zmq_msg_t, explicitly destroy the original zmsg_t and its Qore object
             zmsg_destroy(msg->getPtr());
@@ -2314,14 +2458,12 @@ nothing ZSocket::send(Qore::ZMQ::ZMsg[QoreZMsg] msg) [flags=NAMED_ARGS] {
             return QoreValue();
         }
 
-        while (true) {
-            int rc = zmsg_send(msg->getPtr(), **zsock);
-            if (rc < 0) {
-                if (errno == EINTR)
-                    continue;
-                zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error in ZSocket::send(%s)", obj_msg->getClassName());
-            }
-            break;
+        int64 deadline = zsock_send_deadline(zsock, "ZSOCKET-SEND-ERROR", "ZSocket::send", xsink);
+        if (deadline == -2) {
+            return QoreValue();
+        }
+        if (zsock_send_zmsg(zsock, msg->getPtr(), deadline, "ZSOCKET-SEND-ERROR", "ZSocket::send", xsink) > 0) {
+            zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error in ZSocket::send(%s)", obj_msg->getClassName());
         }
     }
     if (!msg->getPtr())
@@ -2385,22 +2527,38 @@ zsock.send(frame);
     @throw ZSOCKET-SEND-WAIT-ERROR if the @ref Qore::ZMQ::ZFRAME_DONTWAIT flag is used and the message cannot be queued on the socket, this exception is thrown
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
+    @throw THREAD-CANCELLED the thread was cancelled while waiting
+    @throw PROGRAM-INTERRUPTED the \c Program was interrupted while waiting
+    @note a send waits until the socket can queue the message, up to the send timeout (see setSendTimeout()), and ends
+    as soon as the thread is cancelled or its \c Program is interrupted, except on a
+    @ref Qore::ZMQ::ZSocketServer "ZSocketServer": libzmq has no signal that a single peer of a SERVER socket can
+    accept a message, so a send on a SERVER socket whose peer's queue is full blocks until the message is queued or
+    the send timeout expires, and cannot be cancelled; set the send timeout to bound it
 */
 nothing ZSocket::send(Qore::ZMQ::ZFrame[QoreZFrame] frame, int flags = 0) [flags=NAMED_ARGS] {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
-    while (true) {
-        int rc = zframe_send(frame->getPtr(), **zsock, flags);
-        if (rc < 0) {
-            if (errno == EINTR)
-                continue;
-            if (flags & ZFRAME_DONTWAIT && errno == EAGAIN)
-                zmq_error(xsink, "ZSOCKET-SEND-WAIT-ERROR", "error in ZSocket::send(%s)", obj_frame->getClassName());
-            else
-                zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error in ZSocket::send(%s)", obj_frame->getClassName());
+    int rc;
+    if ((flags & ZFRAME_DONTWAIT) || zsock->getType() == ZMQ_SERVER) {
+        // a send that must not wait, or a send on a SERVER socket, which has no writability signal for a peer and
+        // so blocks until the send timeout
+        while ((rc = zframe_send(frame->getPtr(), **zsock, flags)) < 0 && errno == EINTR) {
         }
-        break;
+        rc = rc < 0 ? 1 : 0;
+    } else {
+        int64 deadline = zsock_send_deadline(zsock, "ZSOCKET-SEND-ERROR", "ZSocket::send", xsink);
+        if (deadline == -2) {
+            return QoreValue();
+        }
+        rc = zsock_send_wait(zsock, [&]() { return zframe_send(frame->getPtr(), **zsock, flags | ZFRAME_DONTWAIT); },
+            deadline, "ZSOCKET-SEND-ERROR", "ZSocket::send", xsink);
+    }
+    if (rc > 0) {
+        if (flags & ZFRAME_DONTWAIT && errno == EAGAIN)
+            zmq_error(xsink, "ZSOCKET-SEND-WAIT-ERROR", "error in ZSocket::send(%s)", obj_frame->getClassName());
+        else
+            zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error in ZSocket::send(%s)", obj_frame->getClassName());
     }
     if (!(flags & ZFRAME_REUSE) && !frame->getPtr())
         const_cast<QoreObject*>(obj_frame)->doDelete(xsink);
@@ -2863,7 +3021,14 @@ zsock.send(str1, str2);
     @throw ZSOCKET-TIMEOUT-ERROR thrown if a timeout error occurs
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
- */
+    @throw THREAD-CANCELLED the thread was cancelled while waiting
+    @throw PROGRAM-INTERRUPTED the \c Program was interrupted while waiting
+    @note a send waits until the socket can queue the message, up to the send timeout (see setSendTimeout()), and ends
+    as soon as the thread is cancelled or its \c Program is interrupted, except on a
+    @ref Qore::ZMQ::ZSocketServer "ZSocketServer": libzmq has no signal that a single peer of a SERVER socket can
+    accept a message, so a send on a SERVER socket whose peer's queue is full blocks until the message is queued or
+    the send timeout expires, and cannot be cancelled; set the send timeout to bound it
+*/
 nothing ZSocket::send(data[doc] val, ...) {
     // enforce access from the correct thread
     if (zsock->check(xsink))
@@ -2875,7 +3040,7 @@ nothing ZSocket::send(data[doc] val, ...) {
         --size;
     }
     if (!size) {
-        send_empty_msg(**zsock, xsink);
+        send_empty_msg(zsock, xsink);
         return QoreValue();
     }
 
@@ -2916,19 +3081,20 @@ nothing ZSocket::send(data[doc] val, ...) {
             // Note: zmq_msg_send takes ownership of the message on success
         } else {
             // CLIENT socket - simple send
-            while (true) {
-                int rc = zmq_send(**zsock, serialized->getPtr(), serialized->size(), 0);
-                if (rc < 0) {
-                    if (errno == EINTR)
-                        continue;
-                    if (errno == EAGAIN)
-                        zmq_error(xsink, "ZSOCKET-TIMEOUT-ERROR", "timeout in ZSocket::send()");
-                    else
-                        zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error sending data");
-                    return QoreValue();
-                }
-                break;
+            int64 deadline = zsock_send_deadline(zsock, "ZSOCKET-SEND-ERROR", "ZSocket::send", xsink);
+            if (deadline == -2) {
+                return QoreValue();
             }
+            int rc = zsock_send_wait(zsock, [&]() {
+                return zmq_send(**zsock, serialized->getPtr(), serialized->size(), ZMQ_DONTWAIT);
+            }, deadline, "ZSOCKET-SEND-ERROR", "ZSocket::send", xsink);
+            if (rc > 0) {
+                if (errno == EAGAIN)
+                    zmq_error(xsink, "ZSOCKET-TIMEOUT-ERROR", "timeout in ZSocket::send()");
+                else
+                    zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error sending data");
+            }
+            return QoreValue();
         }
         return QoreValue();
     }
@@ -2960,17 +3126,26 @@ nothing ZSocket::send(data[doc] val, ...) {
             }
             break;
         }
-        while (true) {
-            int rc = zmq_send(**zsock, ptr, len, (i == size - 1) ? 0 : ZMQ_SNDMORE);
-            if (rc < 0) {
-                if (errno == EINTR)
-                    continue;
-                if (errno == EAGAIN)
-                    zmq_error(xsink, "ZSOCKET-TIMEOUT-ERROR", "timeout in ZSocket::send()");
-                else
-                    zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error sending data");
+        int flags = (i == size - 1) ? 0 : ZMQ_SNDMORE;
+        int rc;
+        if (!i) {
+            // the first part is sent when the socket can queue the message; the other parts are always queued with it
+            int64 deadline = zsock_send_deadline(zsock, "ZSOCKET-SEND-ERROR", "ZSocket::send", xsink);
+            if (deadline == -2) {
+                return QoreValue();
             }
-            break;
+            rc = zsock_send_wait(zsock, [&]() { return zmq_send(**zsock, ptr, len, flags | ZMQ_DONTWAIT); }, deadline,
+                "ZSOCKET-SEND-ERROR", "ZSocket::send", xsink);
+        } else {
+            while ((rc = zmq_send(**zsock, ptr, len, flags)) < 0 && errno == EINTR) {
+            }
+            rc = rc < 0 ? 1 : 0;
+        }
+        if (rc > 0) {
+            if (errno == EAGAIN)
+                zmq_error(xsink, "ZSOCKET-TIMEOUT-ERROR", "timeout in ZSocket::send()");
+            else
+                zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error sending data");
         }
 
         if (*xsink) {
@@ -2989,15 +3164,22 @@ zsock.send();
     @throw ZSOCKET-TIMEOUT-ERROR thrown if a timeout error occurs
     @throw ZSOCKET-THREAD-ERROR this exception is thrown if this method is called from a thread other than the thread where the object was created
     @throw ZSOCKET-CONTEXT-ERROR the context is no longer valid
+    @throw THREAD-CANCELLED the thread was cancelled while waiting
+    @throw PROGRAM-INTERRUPTED the \c Program was interrupted while waiting
 
     @note equivalent to calling ZSocket::send(string) or ZSocket::send(binary) with empty arguments
+    @note a send waits until the socket can queue the message, up to the send timeout (see setSendTimeout()), and ends
+    as soon as the thread is cancelled or its \c Program is interrupted, except on a
+    @ref Qore::ZMQ::ZSocketServer "ZSocketServer": libzmq has no signal that a single peer of a SERVER socket can
+    accept a message, so a send on a SERVER socket whose peer's queue is full blocks until the message is queued or
+    the send timeout expires, and cannot be cancelled; set the send timeout to bound it
 */
 nothing ZSocket::send() {
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
 
-    send_empty_msg(**zsock, xsink);
+    send_empty_msg(zsock, xsink);
 }
 
 //! polls multiple sockets and returns all sockets with events

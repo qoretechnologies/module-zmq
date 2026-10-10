@@ -124,6 +124,11 @@ static SimpleRefHolder<BinaryNode> serverSerializeFramesFromOffset(const QoreLis
     - The \c routing_id is automatically assigned by ZeroMQ when a client connects
     - Use @ref getRoutingId() after receiving a message to get the sender's routing_id
     - Use @ref setRoutingId() before sending to route the message to a specific client
+    - A send on this socket cannot be cancelled: libzmq has no signal that a single peer of a SERVER socket can
+      accept a message, so a send to a peer whose queue is full blocks until the message is queued or the send
+      timeout expires; set the send timeout with @ref Qore::ZMQ::ZSocket::setSendTimeout() "setSendTimeout()" to
+      bound it.  Receives and the sends of the other socket types end as soon as the thread is cancelled or its
+      \c Program is interrupted
 
     @since zmq 1.2.0 (requires libzmq draft API)
  */

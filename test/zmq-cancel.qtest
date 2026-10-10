@@ -29,6 +29,9 @@ class ZmqCancelTest inherits QUnit::Test {
         addTestCase("a cancelled thread ends a receive on a CLIENT socket", \cancelRecvClient());
         addTestCase("an interrupted Program ends a receive", \interruptRecv());
         addTestCase("a receive returns the messages and applies the timeouts", \recvTest());
+        addTestCase("a cancelled thread ends a send", \cancelSend());
+        addTestCase("an interrupted Program ends a send", \interruptSend());
+        addTestCase("a send delivers the messages and applies the timeouts", \sendTest());
         addTestCase("a sandboxed Program binds a wildcard port", \sandboxedWildcardBind());
         set_return_value(main());
     }
@@ -289,6 +292,142 @@ class ZmqCancelTest inherits QUnit::Test {
         assertNothing(client.tryRecvMsg(100ms));
         client.setRecvTimeout(100ms);
         assertThrows("ZSOCKET-TIMEOUT-ERROR", \client.recvMsg());
+    }
+
+
+    cancelSend() {
+        # sockets without a peer cannot queue a message, so a send waits for the send timeout
+        code new_push = ZSocket sub (ZContext ctx) {
+            ZSocketPush sock(ctx);
+            sock.setSendTimeout(WaitTimeout);
+            return sock;
+        };
+        code new_client = ZSocket sub (ZContext ctx) {
+            ZSocketClient sock(ctx);
+            sock.setSendTimeout(WaitTimeout);
+            return sock;
+        };
+        hash<string, list<code>> waits = {
+            "send(data)": (sub (ZSocket sock) { sock.send("a", "b"); }, new_push),
+            "send(ZMsg)": (sub (ZSocket sock) { ZMsg msg("a", "b"); sock.send(msg); }, new_push),
+            "send(ZFrame)": (sub (ZSocket sock) { ZFrame frame("a"); sock.send(frame); }, new_push),
+            "send()": (sub (ZSocket sock) { sock.send(); }, new_push),
+            "CLIENT send(data)": (sub (ZSocket sock) { sock.send("a"); }, new_client),
+            "CLIENT send(ZMsg)": (sub (ZSocket sock) { ZMsg msg("a"); sock.send(msg); }, new_client),
+        };
+        foreach hash<auto> i in (waits.pairIterator()) {
+            hash<auto> rv = cancelWait(i.value[0], i.value[1]);
+            assertEq("THREAD-CANCELLED", rv.err, i.key + ": " + rv.desc);
+            assertLt(MaxCancelUs, rv.us, i.key + " ends at once");
+        }
+    }
+
+    interruptSend() {
+        SandboxManager sm();
+        sm.setNetworkDefaultPolicy(True);
+        Program p(PO_NEW_STYLE);
+        p.setSandboxManager(sm);
+        p.loadModule("zmq");
+        p.parse(sprintf("sub run(Queue started) { ZContext zctx(); ZSocketPush writer(zctx); "
+            "writer.setSendTimeout(%d); started.push(True); writer.send(\"a\"); }",
+            WaitTimeout.durationMilliseconds()), "zmq-interrupt-send");
+        Queue started();
+        Queue done();
+        background sub () {
+            hash<auto> rv;
+            try {
+                p.callFunction("run", started);
+                rv.err = "NONE";
+            } catch (hash<ExceptionInfo> ex) {
+                rv.err = ex.err;
+                rv.desc = ex.desc;
+                # the wait was not reached if the call failed before it
+                started.push(False);
+            }
+            rv.end = clock_get_monotonic_us();
+            done.push(rv);
+        }();
+        assertTrue(started.get(), "the sandboxed Program reaches the send");
+        int start = clock_get_monotonic_us();
+        sm.requestInterrupt();
+        hash<auto> rv = done.get();
+        assertEq("PROGRAM-INTERRUPTED", rv.err, rv.desc);
+        assertLt(MaxCancelUs, rv.end - start);
+    }
+
+    sendTest() {
+        ZContext zctx();
+        ZSocketPull reader(zctx, "@tcp://127.0.0.1:*");
+        ZSocketPush writer(zctx, ">" + reader.endpoint());
+
+        # each send method delivers the whole message
+        writer.send("a", "b");
+        ZMsg msg("c", "d");
+        writer.send(msg);
+        ZFrame frame("e");
+        writer.send(frame);
+        frame = new ZFrame("f");
+        writer.send(frame, ZFRAME_REUSE);
+        assertEq(1, frame.size(), "a frame sent with ZFRAME_REUSE is kept");
+        writer.send();
+        list<list<string>> received = map recvStrings(reader), xrange(5);
+        assertEq((("a", "b"), ("c", "d"), ("e",), ("f",), ("",)), received);
+
+        # the send timeout set on the socket ends a send to a socket without a peer
+        # (the sockets are not captured by closures: a context must not be destroyed before its sockets)
+        ZSocketPush lonely(zctx);
+        lonely.setSendTimeout(200ms);
+        foreach hash<auto> i in ((
+                {"label": "send(data)", "args": ("a", "b"), "err": "ZSOCKET-TIMEOUT-ERROR"},
+                {"label": "send(ZMsg)", "args": (new ZMsg("a", "b"),), "err": "ZSOCKET-SEND-ERROR"},
+                {"label": "send(ZFrame)", "args": (new ZFrame("a"),), "err": "ZSOCKET-SEND-ERROR"},
+                {"label": "send()", "args": (), "err": "ZSOCKET-TIMEOUT-ERROR"},
+            )) {
+            int start = clock_get_monotonic_us();
+            assertThrows(i.err, \call_object_method_args(), (lonely, "send", i.args), i.label);
+            int us = clock_get_monotonic_us() - start;
+            assertGe(200000, us, i.label + " waits for the timeout");
+            assertLt(200000 + MaxCancelUs, us, i.label + " ends with the timeout");
+        }
+        # a frame that must not wait fails at once
+        int start = clock_get_monotonic_us();
+        assertThrows("ZSOCKET-SEND-WAIT-ERROR", \lonely.send(), (new ZFrame("a"), ZFRAME_DONTWAIT));
+        assertLt(100000, clock_get_monotonic_us() - start, "a send with ZFRAME_DONTWAIT does not wait");
+
+        # a send that the socket does not allow in its state fails at once, without waiting for the timeout
+        ZSocketRep rep(zctx, "", "@tcp://127.0.0.1:*");
+        ZSocketReq req(zctx, "", ">" + rep.endpoint());
+        req.setSendTimeout(WaitTimeout);
+        req.send("request");
+        start = clock_get_monotonic_us();
+        assertThrows("ZSOCKET-SEND-ERROR", "Operation cannot be accomplished in current state",
+            \req.send(), "again", "a second request before the reply");
+        assertThrows("ZSOCKET-SEND-ERROR", \req.send(), (new ZMsg("again"),));
+        assertLt(MaxCancelUs, clock_get_monotonic_us() - start, "the sends fail at once");
+        assertEq("request", rep.recvMsg().popStr());
+        rep.send("reply");
+        assertEq("reply", req.recvMsg().popStr());
+
+        # a CLIENT socket sends to its server
+        ZSocketServer server(zctx, "tcp://127.0.0.1:*");
+        ZSocketClient client(zctx, server.endpoint());
+        client.send("hello");
+        assertEq("hello", server.recvMsg().popStr());
+        ZMsg cmsg("hello again");
+        client.send(cmsg);
+        assertEq("hello again", server.recvMsg().popStr());
+        # a CLIENT socket without a server ends a send with the send timeout
+        ZSocketClient lonely_client(zctx);
+        lonely_client.setSendTimeout(200ms);
+        assertThrows("ZSOCKET-TIMEOUT-ERROR", \lonely_client.send(), "a");
+    }
+
+
+    #! receives a message and returns its frames as strings
+    private list<string> recvStrings(ZSocket sock) {
+        ZMsg msg = sock.recvMsg();
+        # popStr() returns NOTHING for an empty frame
+        return map msg.popFrame().bin().toString(), xrange(msg.size());
     }
 
 }

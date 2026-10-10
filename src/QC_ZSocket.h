@@ -105,6 +105,8 @@ public:
         // receives on such sockets would always use the default timeout set at construction
         if (option_name == ZMQ_RCVTIMEO && option_len == sizeof(int)) {
             recv_timeout_ms.store(*static_cast<const int*>(option_value), std::memory_order_relaxed);
+        } else if (option_name == ZMQ_SNDTIMEO && option_len == sizeof(int)) {
+            send_timeout_ms.store(*static_cast<const int*>(option_value), std::memory_order_relaxed);
         }
         return 0;
     }
@@ -132,6 +134,11 @@ public:
         return recv_timeout_ms.load(std::memory_order_relaxed);
     }
 
+    //! returns the cached send timeout (thread-safe to read)
+    DLLLOCAL int getSendTimeoutMs() const {
+        return send_timeout_ms.load(std::memory_order_relaxed);
+    }
+
     //! returns the socket type code
     virtual int getType() const = 0;
 
@@ -147,6 +154,7 @@ protected:
         // set default timeout values
         int v = ZSOCK_TIMEOUT_MS;
         zmq_setsockopt(sock, ZMQ_SNDTIMEO, &v, sizeof v);
+        send_timeout_ms.store(v, std::memory_order_relaxed);
         v = ZSOCK_TIMEOUT_MS;
         zmq_setsockopt(sock, ZMQ_RCVTIMEO, &v, sizeof v);
         recv_timeout_ms.store(v, std::memory_order_relaxed);
@@ -161,6 +169,9 @@ protected:
     //! Cached recv timeout for thread-safe sockets; updated by every ZMQ_RCVTIMEO update in setSocketOption(),
     //! as reading ZMQ_RCVTIMEO back with getSocketOption() is not thread-safe
     std::atomic<int> recv_timeout_ms{ZSOCK_TIMEOUT_MS};
+
+    //! Cached send timeout for thread-safe sockets; updated by every ZMQ_SNDTIMEO update in setSocketOption()
+    std::atomic<int> send_timeout_ms{ZSOCK_TIMEOUT_MS};
 };
 
 class QoreZSockBind : public QoreZSock {
