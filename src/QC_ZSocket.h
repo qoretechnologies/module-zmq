@@ -43,7 +43,9 @@
 class QoreZSock : public AbstractZmqThreadLocalData {
 public:
     // creates the object
-    DLLLOCAL QoreZSock(QoreZContext& ctx, int type, ExceptionSink* xsink) : sock(zmq_socket(*ctx, type)) {
+    DLLLOCAL QoreZSock(QoreZContext& ctx, int type, ExceptionSink* xsink) : sock(zmq_socket(*ctx, type)), ctx(&ctx) {
+        // the socket keeps its context: zmq_ctx_term() blocks until every socket of the context is closed
+        ctx.ref();
         if (!sock) {
             zmq_error(xsink, "ZSOCKET-CONSTRUCTOR-ERROR", "error creating socket");
             return;
@@ -148,6 +150,8 @@ public:
 protected:
     DLLLOCAL virtual ~QoreZSock() {
         zmq_close(sock);
+        // the context is terminated when it has been deleted and its last socket is closed
+        ctx->deref();
     }
 
     DLLLOCAL void setTimeouts() {
@@ -165,6 +169,9 @@ protected:
     }
 
     void* sock = nullptr;
+
+    //! the context of the socket, referenced while the socket exists
+    QoreZContext* ctx;
 
     //! Cached recv timeout for thread-safe sockets; updated by every ZMQ_RCVTIMEO update in setSocketOption(),
     //! as reading ZMQ_RCVTIMEO back with getSocketOption() is not thread-safe

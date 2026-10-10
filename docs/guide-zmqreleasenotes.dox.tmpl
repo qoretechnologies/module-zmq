@@ -25,6 +25,11 @@
       not be interrupted before.  A send on a @ref Qore::ZMQ::ZSocketServer "ZSocketServer" whose peer cannot accept
       the message still blocks until the send timeout, as libzmq has no writability signal for a single peer of a
       SERVER socket
+    - fixed using a frame or message after a call that consumed it (@ref Qore::ZMQ::ZSocket::send() "send()",
+      @ref Qore::ZMQ::ZMsg::add() "ZMsg::add()", or @ref Qore::ZMQ::ZMsg::push() "ZMsg::push()"): the object
+      was not deleted as documented, and using it crashed the process; it raises \c OBJECT-ALREADY-DELETED now
+    - fixed deleting a @ref Qore::ZMQ::ZContext "ZContext" while its sockets still exist: the thread blocked
+      forever; the sockets keep their context, and it is terminated when its last socket is closed
 
     - corrected subscription and send-method links and wildcard-address examples
       so the complete reference builds with strict Doxygen checks

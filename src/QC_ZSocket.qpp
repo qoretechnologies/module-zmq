@@ -2466,7 +2466,7 @@ nothing ZSocket::send(Qore::ZMQ::ZMsg[QoreZMsg] msg) [flags=NAMED_ARGS] {
             zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error in ZSocket::send(%s)", obj_msg->getClassName());
         }
     }
-    if (!msg->getPtr())
+    if (!*msg->getPtr())
         const_cast<QoreObject*>(obj_msg)->doDelete(xsink);
 }
 
@@ -2560,7 +2560,7 @@ nothing ZSocket::send(Qore::ZMQ::ZFrame[QoreZFrame] frame, int flags = 0) [flags
         else
             zmq_error(xsink, "ZSOCKET-SEND-ERROR", "error in ZSocket::send(%s)", obj_frame->getClassName());
     }
-    if (!(flags & ZFRAME_REUSE) && !frame->getPtr())
+    if (!(flags & ZFRAME_REUSE) && !*frame->getPtr())
         const_cast<QoreObject*>(obj_frame)->doDelete(xsink);
 }
 

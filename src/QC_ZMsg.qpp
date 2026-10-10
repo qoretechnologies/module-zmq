@@ -260,7 +260,7 @@ nothing ZMsg::add(Qore::ZMQ::ZFrame[QoreZFrame] frame) [flags=NAMED_ARGS] {
     int rc = zmsg_append(**msg, frame->getPtr());
     if (rc)
         zmq_error(xsink, "ZMSG-APPEND-ERROR", "error in zmsg_append()");
-    if (!frame->getPtr())
+    if (!*frame->getPtr())
         const_cast<QoreObject*>(obj_frame)->doDelete(xsink);
 }
 
@@ -322,7 +322,7 @@ nothing ZMsg::add(Qore::ZMQ::ZMsg[QoreZMsg] submsg) [flags=NAMED_ARGS] {
     int rc = zmsg_addmsg(**msg, submsg->getPtr());
     if (rc)
         zmq_error(xsink, "ZMSG-ADD-ERROR", "error in zmsg_addmsg()");
-    if (!submsg->getPtr())
+    if (!*submsg->getPtr())
         const_cast<QoreObject*>(obj_submsg)->doDelete(xsink);
 }
 
@@ -384,7 +384,7 @@ nothing ZMsg::push(Qore::ZMQ::ZFrame[QoreZFrame] frame) [flags=NAMED_ARGS] {
     int rc = zmsg_prepend(**msg, frame->getPtr());
     if (rc)
         zmq_error(xsink, "ZMSG-PREPEND-ERROR", "error in zmsg_prepend()");
-    if (!frame->getPtr())
+    if (!*frame->getPtr())
         const_cast<QoreObject*>(obj_frame)->doDelete(xsink);
 }
 

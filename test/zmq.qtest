@@ -59,6 +59,8 @@ class ZmqTest inherits QUnit::Test {
         }
         addTestCase("sandbox interrupt", \sandboxInterruptTest());
         addTestCase("sandbox network", \sandboxNetworkTest());
+        addTestCase("consumed objects are deleted", \consumedObjectsTest());
+        addTestCase("a context deleted before its sockets", \contextLifetimeTest());
 
         set_return_value(main());
     }
@@ -1464,4 +1466,48 @@ class ZmqTest inherits QUnit::Test {
             printf("Network sandbox tests passed\n");
         }
     }
+
+    #! a frame or message that a call consumes is deleted, as documented; it was left with no data, and using it
+    #! crashed the process
+    consumedObjectsTest() {
+        ZMsg msg();
+        ZFrame frame("a");
+        msg.add(frame);
+        assertThrows("OBJECT-ALREADY-DELETED", \frame.size(), NOTHING, "ZMsg::add(ZFrame) deletes the frame");
+        frame = new ZFrame("b");
+        msg.push(frame);
+        assertThrows("OBJECT-ALREADY-DELETED", \frame.size(), NOTHING, "ZMsg::push(ZFrame) deletes the frame");
+        ZMsg submsg("c");
+        msg.add(submsg);
+        assertThrows("OBJECT-ALREADY-DELETED", \submsg.size(), NOTHING, "ZMsg::add(ZMsg) deletes the submessage");
+        assertEq(3, msg.size());
+
+        ZContext zctx();
+        ZSocketPull reader(zctx, "@tcp://127.0.0.1:*");
+        ZSocketPush writer(zctx, ">" + reader.endpoint());
+        writer.send(msg);
+        assertThrows("OBJECT-ALREADY-DELETED", \msg.size(), NOTHING, "ZSocket::send(ZMsg) deletes the message");
+        assertEq(3, reader.recvMsg().size());
+        frame = new ZFrame("d");
+        writer.send(frame);
+        assertThrows("OBJECT-ALREADY-DELETED", \frame.size(), NOTHING, "ZSocket::send(ZFrame) deletes the frame");
+        frame = new ZFrame("e");
+        writer.send(frame, ZFRAME_REUSE);
+        assertEq(1, frame.size(), "ZSocket::send(ZFrame) keeps a frame sent with ZFRAME_REUSE");
+        assertEq("d", reader.recvMsg().popStr());
+        assertEq("e", reader.recvMsg().popStr());
+    }
+
+    #! the sockets of a context keep it: the context is terminated when it has been deleted and its sockets are closed
+    contextLifetimeTest() {
+        ZContext zctx();
+        ZSocketPull reader(zctx, "@tcp://127.0.0.1:*");
+        ZSocketPush writer(zctx, ">" + reader.endpoint());
+        # deleting the context blocked until all of its sockets were closed, that is forever in this thread
+        delete zctx;
+        assertFalse(exists zctx);
+        writer.send("still connected");
+        assertEq("still connected", reader.recvMsg().popStr());
+    }
+
 }

@@ -360,12 +360,14 @@ class ZmqCancelTest inherits QUnit::Test {
         ZSocketPull reader(zctx, "@tcp://127.0.0.1:*");
         ZSocketPush writer(zctx, ">" + reader.endpoint());
 
-        # each send method delivers the whole message
+        # each send method delivers the whole message, and the objects sent are consumed
         writer.send("a", "b");
         ZMsg msg("c", "d");
         writer.send(msg);
+        assertThrows("OBJECT-ALREADY-DELETED", \msg.size(), NOTHING, "the message sent is deleted");
         ZFrame frame("e");
         writer.send(frame);
+        assertThrows("OBJECT-ALREADY-DELETED", \frame.size(), NOTHING, "the frame sent is deleted");
         frame = new ZFrame("f");
         writer.send(frame, ZFRAME_REUSE);
         assertEq(1, frame.size(), "a frame sent with ZFRAME_REUSE is kept");
