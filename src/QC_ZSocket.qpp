@@ -960,16 +960,23 @@ const ZMQ_IPV6 = ZMQ_IPV6;
     determines how long pending messages which have yet to be sent to a peer shall linger in memory
     after a socket is disconnected and further affects the termination of the socket's context.
 
-    he following outlines the different behaviours:
-    - -1: specifies an infinite linger period. Pending messages shall not be discarded after a disconnect or close; attempting to terminate the socket's context shall block until all pending messages have been sent to a peer.
+    The following outlines the different behaviours:
+    - -1: specifies an infinite linger period. Pending messages shall not be discarded after a disconnect or close;
+      they are delivered whenever a peer is available
     - 0: specifies no linger period. Pending messages shall be discarded immediately after a disconnect or close.
-    - positive values: specify an upper bound for the linger period in milliseconds. Pending messages shall not be discarded after a disconnect or close; attempting to terminate the socket's context shall block until either all pending messages have been sent to a peer, or the linger period expires, after which any pending messages shall be discarded.
+    - positive values: specify an upper bound for the linger period in milliseconds. Pending messages shall not be
+      discarded after a disconnect or close until either all pending messages have been sent to a peer, or the
+      linger period expires, after which any pending messages shall be discarded.
+
+    Destroying a @ref Qore::ZMQ::ZContext "ZContext" never waits for pending messages; they are delivered in the
+    background within the linger period, and at the end of the process the module waits for them until it expires
+    (an infinite linger period for at most 2 minutes); see @ref Qore::ZMQ::ZContext "ZContext".
 
     <b>0MQ Socket Option Information</b>
     |!Property|!Description
     |Option value type|int
     |Option value unit|milliseconds
-    |Default value|30000 (thirty seconds)
+    |Default value|120000 (two minutes); 0 for sockets of a context with @ref Qore::ZMQ::ZMQ_BLOCKY "ZMQ_BLOCKY" set to False
     |Applicable socket types|all
 */
 const ZMQ_LINGER = ZMQ_LINGER;
@@ -2373,6 +2380,8 @@ zsock.send(msg);
     the send timeout expires, and cannot be cancelled; set the send timeout to bound it
 */
 nothing ZSocket::send(Qore::ZMQ::ZMsg[QoreZMsg] msg) [flags=NAMED_ARGS] {
+    // the socket's linger period applies to its pending messages when it is closed
+    zsock->markSent();
     {
         // enforce access from the correct thread
         if (zsock->check(xsink))
@@ -2536,6 +2545,8 @@ zsock.send(frame);
     the send timeout expires, and cannot be cancelled; set the send timeout to bound it
 */
 nothing ZSocket::send(Qore::ZMQ::ZFrame[QoreZFrame] frame, int flags = 0) [flags=NAMED_ARGS] {
+    // the socket's linger period applies to its pending messages when it is closed
+    zsock->markSent();
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
@@ -3030,6 +3041,8 @@ zsock.send(str1, str2);
     the send timeout expires, and cannot be cancelled; set the send timeout to bound it
 */
 nothing ZSocket::send(data[doc] val, ...) {
+    // the socket's linger period applies to its pending messages when it is closed
+    zsock->markSent();
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
@@ -3175,6 +3188,8 @@ zsock.send();
     the send timeout expires, and cannot be cancelled; set the send timeout to bound it
 */
 nothing ZSocket::send() {
+    // the socket's linger period applies to its pending messages when it is closed
+    zsock->markSent();
     // enforce access from the correct thread
     if (zsock->check(xsink))
         return QoreValue();
@@ -3322,6 +3337,12 @@ static nothing ZSocket::proxy(ZSocket[QoreZSock] frontend, ZSocket[QoreZSock] ba
     if (frontend->check(xsink) || backend->check(xsink) || (capture && capture->check(xsink)))
         return QoreValue();
 
+    // the proxy sends on its sockets
+    frontend->markSent();
+    backend->markSent();
+    if (capture) {
+        capture->markSent();
+    }
     zmq_proxy(***frontend, ***backend, capture ? ***capture : nullptr);
     // zmq_proxy() always returns -1 and errno set to EINTR or ETERM with an orderly shutdown
     if (errno != EINTR && errno != ETERM)
@@ -3373,6 +3394,13 @@ static nothing ZSocket::proxySteerable(ZSocket[QoreZSock] frontend, ZSocket[Qore
     if (frontend->check(xsink) || backend->check(xsink) || (capture && capture->check(xsink)) || control->check(xsink))
         return QoreValue();
 
+    // the proxy sends on its sockets, and replies on the control socket
+    frontend->markSent();
+    backend->markSent();
+    if (capture) {
+        capture->markSent();
+    }
+    control->markSent();
     zmq_proxy_steerable(***frontend, ***backend, capture ? ***capture : nullptr, ***control);
     // zmq_proxy_steerable() always returns -1 and errno set to EINTR or ETERM with an orderly shutdown
     if (errno != EINTR && errno != ETERM)

@@ -251,6 +251,8 @@ server.sendTo(routing_id, response_data);
     @since zmq 1.2.1
 */
 nothing ZSocketServer::sendTo(int routing_id, ...) {
+    // the socket's linger period applies to its pending messages when it is closed
+    zsock->markSent();
     if (routing_id == 0) {
         xsink->raiseException("ZSOCKET-SENDTO-ERROR", "routing_id cannot be 0");
         return QoreValue();

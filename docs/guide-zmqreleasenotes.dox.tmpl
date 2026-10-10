@@ -6,6 +6,15 @@
 
     @section zmq_1_2_0 zmq Module Version 1.2.0
 
+    - destroying a @ref Qore::ZMQ::ZContext "ZContext" never waits for the pending messages of its closed sockets:
+      they are delivered in the background within each socket's linger period, and at the end of the process the
+      module waits for them until the linger periods expire (an infinite linger period for at most 2 minutes);
+      previously the destructor waited until they were delivered, i.e. forever for an undeliverable message with
+      the default (infinite) linger period, which could hang a program at exit
+    - new sockets of a context with @ref Qore::ZMQ::ZMQ_BLOCKY "ZMQ_BLOCKY" set (the default) have a linger period
+      of 2 minutes (@ref Qore::ZMQ::ZMQ_LINGER "ZMQ_LINGER" = 120000), like their send and receive timeouts, instead
+      of libzmq's infinite linger period; sockets of a non-blocky context still have no linger period
+
     - a thread waiting in @ref Qore::ZMQ::ZSocket::poll() "ZSocket::poll()",
       @ref Qore::ZMQ::ZSocket::waitRead() "ZSocket::waitRead()",
       @ref Qore::ZMQ::ZSocket::waitWrite() "ZSocket::waitWrite()",

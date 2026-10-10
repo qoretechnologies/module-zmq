@@ -21,8 +21,20 @@
 
 #include "zmq-module.h"
 
+#include "QC_ZContext.h"
+
 #include <cerrno>
+#include <chrono>
 #include <climits>
+#include <condition_variable>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <memory>
+#include <mutex>
+#include <set>
+#include <system_error>
+#include <thread>
 #include <vector>
 
 static void zmq_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink);
@@ -123,7 +135,122 @@ static void zmq_module_ns_init(QoreNamespace* rns, QoreNamespace* qns, Exception
     qns->addNamespace(zmqns.copy());
 }
 
+namespace {
+//! The terminator threads of contexts whose closed sockets may still have pending messages
+struct ZmqTerminatorRegistry {
+    std::mutex m;
+    //! signalled when a terminator thread has terminated its context
+    std::condition_variable cv;
+    //! the shutdown deadlines (monotonic microseconds) of the running terminator threads
+    std::multiset<int64> deadlines;
+};
+
+//! Shared with every terminator thread, so that a thread still running when module shutdown stops waiting for it can
+//! finish safely while the process exits
+std::shared_ptr<ZmqTerminatorRegistry> zmq_terminators = std::make_shared<ZmqTerminatorRegistry>();
+
+#ifdef DEBUG
+//! Test hook (debug builds): returns true if a terminator thread must fail to start
+bool zmq_test_terminator_thread_failure() {
+    const char* v = getenv("QORE_ZMQ_TEST_TERMINATOR_THREAD_FAILURE");
+    return v && !strcmp(v, "1");
+}
+#endif
+}
+
+void qore_zmq_ctx_term(void* ctx) {
+    while (zmq_ctx_term(ctx) && errno == EINTR) {
+    }
+}
+
+int qore_zmq_infinite_linger_cap_ms() {
+#ifdef DEBUG
+    // test hook (debug builds): a shorter cap, so that tests do not wait for the default
+    const char* v = getenv("QORE_ZMQ_TEST_INFINITE_LINGER_CAP_MS");
+    if (v && *v) {
+        int ms = atoi(v);
+        if (ms > 0) {
+            return ms;
+        }
+    }
+#endif
+    return ZSOCK_TIMEOUT_MS;
+}
+
+void qore_zmq_terminate_context(void* ctx, int64 shutdown_deadline) {
+    std::shared_ptr<ZmqTerminatorRegistry> reg = zmq_terminators;
+    bool registered = false;
+    std::multiset<int64>::iterator i;
+    try {
+        {
+            std::lock_guard<std::mutex> l(reg->m);
+            i = reg->deadlines.insert(shutdown_deadline);
+            registered = true;
+        }
+#ifdef DEBUG
+        if (zmq_test_terminator_thread_failure()) {
+            throw std::system_error(std::make_error_code(std::errc::resource_unavailable_try_again),
+                "test hook QORE_ZMQ_TEST_TERMINATOR_THREAD_FAILURE");
+        }
+#endif
+        std::thread([reg, ctx, i]() {
+            qore_zmq_ctx_term(ctx);
+            {
+                std::lock_guard<std::mutex> l(reg->m);
+                reg->deadlines.erase(i);
+            }
+            reg->cv.notify_all();
+        }).detach();
+        return;
+    } catch (const std::exception& ex) {
+        if (registered) {
+            std::lock_guard<std::mutex> l(reg->m);
+            reg->deadlines.erase(i);
+        }
+        // a destructor must not wait for the network: the context stays open, with its I/O thread and descriptors,
+        // until the process exits; its pending messages are still delivered while the process runs
+        fprintf(stderr, "warning: zmq: cannot start a thread to terminate a context whose sockets may still have "
+            "pending messages (%s); the context is left open until the process exits\n", ex.what());
+    }
+}
+
+void QoreZContext::socketClosed(int linger_ms) {
+    if (!linger_ms) {
+        return;
+    }
+    int64 now = q_clock_getmicros_monotonic();
+    // a closed socket's linger period starts when it is closed
+    setMax(linger_deadline, linger_ms < 0 ? LLONG_MAX : now + static_cast<int64>(linger_ms) * 1000);
+    // module shutdown waits for a finite linger period in full, and for an infinite one up to a cap
+    int shutdown_ms = linger_ms < 0 ? qore_zmq_infinite_linger_cap_ms() : linger_ms;
+    setMax(shutdown_deadline, now + static_cast<int64>(shutdown_ms) * 1000);
+}
+
+QoreZContext::~QoreZContext() {
+    if (!ctx) {
+        return;
+    }
+    // when no closed socket can still have pending messages, terminating the context does not wait for the
+    // network: it is terminated here, so that its endpoints are released when the destructor returns
+    if (linger_deadline.load() <= q_clock_getmicros_monotonic()) {
+        qore_zmq_ctx_term(ctx);
+        return;
+    }
+    qore_zmq_terminate_context(ctx, shutdown_deadline.load());
+}
+
 static void zmq_module_delete() {
+    // wait for the terminator threads, each until its shutdown deadline: pending messages are delivered until their
+    // linger periods expire (an infinite one is capped); a thread still running then is left to the process exit
+    std::shared_ptr<ZmqTerminatorRegistry> reg = zmq_terminators;
+    std::unique_lock<std::mutex> l(reg->m);
+    while (!reg->deadlines.empty()) {
+        int64 remaining = *reg->deadlines.rbegin() - q_clock_getmicros_monotonic();
+        if (remaining <= 0) {
+            break;
+        }
+        reg->cv.wait_for(l, std::chrono::microseconds(remaining));
+    }
 }
 
 // module library functions

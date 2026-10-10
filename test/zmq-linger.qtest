@@ -1,0 +1,224 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# Copyright 2026 Qore Technologies, s.r.o.
+
+%modern
+
+%prepend-module-path ${SCRIPT_DIR}/../build
+%requires QUnit
+%requires Util
+%requires zmq
+
+%exec-class ZmqLingerTest
+
+# A socket's pending messages are delivered within its linger period, also after its context is destroyed, while
+# destroying a context never waits for them; module shutdown waits for them until their linger periods expire (an
+# infinite one is capped).
+public class ZmqLingerTest inherits QUnit::Test {
+    private {
+        # the directory of the ipc endpoints and of the child scripts
+        string dir;
+        # the directory of the zmq module loaded by this test, for the child processes
+        string module_dir;
+        # true if the module has the test hooks of debug builds
+        bool have_hooks;
+        # a destructor that does not wait returns in well under this time
+        const MaxDestructorMs = 1000;
+    }
+
+    constructor() : QUnit::Test("ZmqLingerTest", "1.0") {
+        # ipc endpoint paths are limited to about 100 bytes
+        dir = tmp_location() + DirSep + "zl" + get_random_string(8);
+        mkdir(dir);
+        module_dir = dirname(get_module_hash().zmq.filename);
+
+        addTestCase("default linger period", \defaultLinger());
+        addTestCase("destroying a context does not wait for pending messages", \destructorReturns());
+        addTestCase("pending messages are delivered after the context was destroyed", \deliveredAfterDestructor());
+        addTestCase("a context without pending messages releases its endpoints when destroyed", \endpointReleased());
+        addTestCase("module shutdown waits for pending messages", \shutdownDelivers());
+        addTestCase("module shutdown waits no longer than the linger period", \shutdownBounded());
+        addTestCase("a context whose terminator thread cannot start is left open", \terminatorThreadFailure());
+        addTestCase("module shutdown caps an infinite linger period", \infiniteLingerCapped());
+        set_return_value(main());
+
+        foreach string f in (glob(dir + DirSep + "*")) {
+            unlink(f);
+        }
+        rmdir(dir);
+    }
+
+    private string endpoint(string name) {
+        return "ipc://" + dir + DirSep + name;
+    }
+
+    # runs a child qore script with this test's zmq module and the given environment variables; returns its output
+    # and the time it took
+    private hash<auto> runChild(string name, string code, *hash<string, string> env) {
+        string script = dir + DirSep + name + ".q";
+        File f();
+        f.open2(script, O_CREAT | O_WRONLY | O_TRUNC);
+        f.write("%modern\n%requires zmq\n" + code);
+        f.close();
+        *string vars = foldl $1 + " " + $2, (map sprintf("%s='%s'", $1.key, $1.value), env.pairIterator());
+        string cmd = sprintf("%s QORE_MODULE_DIR='%s' qore '%s' 2>&1", vars ?? "", module_dir, script);
+        int start = clock_get_monotonic_us();
+        string output = backquote(cmd);
+        return {
+            "output": output,
+            "ms": (clock_get_monotonic_us() - start) / 1000,
+        };
+    }
+
+    defaultLinger() {
+        ZContext ctx();
+        ZSocketPush s(ctx);
+        # the default timeout, instead of libzmq's infinite linger period
+        assertEq(120000, s.getOption(ZMQ_LINGER));
+
+        # sockets of a non-blocky context have no linger period
+        ZContext nb();
+        nb.setOption(ZMQ_BLOCKY, 0);
+        ZSocketPush s2(nb);
+        assertEq(0, s2.getOption(ZMQ_LINGER));
+    }
+
+    destructorReturns() {
+        *ZContext ctx = new ZContext();
+        {
+            ZSocketPush s(ctx);
+            # no peer ever connects; module shutdown waits for this message at most this long
+            s.setOption(ZMQ_LINGER, 3000);
+            s.connect(endpoint("absent"));
+            s.send("pending");
+        }
+        int start = clock_get_monotonic_us();
+        delete ctx;
+        int ms = (clock_get_monotonic_us() - start) / 1000;
+        assertTrue(ms < MaxDestructorMs, sprintf("the destructor returned after %d ms", ms));
+    }
+
+    deliveredAfterDestructor() {
+        string ep = endpoint("later");
+        *ZContext ctx = new ZContext();
+        {
+            ZSocketPush s(ctx);
+            s.setOption(ZMQ_LINGER, 30000);
+            s.connect(ep);
+            s.send("hello");
+        }
+        int start = clock_get_monotonic_us();
+        delete ctx;
+        int ms = (clock_get_monotonic_us() - start) / 1000;
+        assertTrue(ms < MaxDestructorMs, sprintf("the destructor returned after %d ms", ms));
+
+        # the peer binds only after the sender's context was destroyed
+        ZContext ctx2();
+        ZSocketPull r(ctx2);
+        r.setOption(ZMQ_RCVTIMEO, 30000);
+        r.bind(ep);
+        assertEq("hello", r.recvMsg().popStr());
+    }
+
+    endpointReleased() {
+        string ep = endpoint("rebind");
+        {
+            ZContext ctx();
+            ZSocketPull r(ctx);
+            r.bind(ep);
+        }
+        # the context was terminated in its destructor: the endpoint can be bound again at once
+        ZContext ctx();
+        ZSocketPull r(ctx);
+        r.bind(ep);
+        assertTrue(True, "the endpoint was bound again");
+    }
+
+    shutdownDelivers() {
+        string data_ep = endpoint("data");
+        string sync_ep = endpoint("sync");
+        ZContext ctx();
+        ZSocketPull sync(ctx);
+        sync.setOption(ZMQ_RCVTIMEO, 30000);
+        sync.bind(sync_ep);
+
+        # the child sends a message to a peer that does not exist yet, destroys its context, tells this test, and
+        # exits: module shutdown waits for the message to be delivered
+        Counter done(1);
+        hash<auto> res;
+        background sub () {
+            on_exit done.dec();
+            res = runChild("delivers", sprintf("*ZContext ctx = new ZContext();\n"
+                "{\n"
+                "    ZSocketPush s(ctx);\n"
+                "    s.setOption(ZMQ_LINGER, 30000);\n"
+                "    s.connect(%y);\n"
+                "    s.send(\"from child\");\n"
+                "}\n"
+                "delete ctx;\n"
+                "ZContext sync_ctx();\n"
+                "ZSocketPush sync(sync_ctx);\n"
+                "sync.connect(%y);\n"
+                "sync.send(\"closed\");\n", data_ep, sync_ep));
+        }();
+
+        assertEq("closed", sync.recvMsg().popStr());
+        ZSocketPull data(ctx);
+        data.setOption(ZMQ_RCVTIMEO, 30000);
+        data.bind(data_ep);
+        assertEq("from child", data.recvMsg().popStr());
+        assertEq(0, done.waitForZero(60s));
+        assertEq("", trim(res.output));
+    }
+
+    shutdownBounded() {
+        # no peer ever connects: the child exits when the linger period has expired
+        hash<auto> res = runChild("bounded", sprintf("ZContext ctx();\n"
+            "ZSocketPush s(ctx);\n"
+            "s.setOption(ZMQ_LINGER, 1500);\n"
+            "s.connect(%y);\n"
+            "s.send(\"pending\");\n", endpoint("nobody")));
+        assertEq("", trim(res.output));
+        assertTrue(res.ms >= 1000, sprintf("the child exited after %d ms", res.ms));
+        assertTrue(res.ms < 30000, sprintf("the child exited after %d ms", res.ms));
+    }
+
+    terminatorThreadFailure() {
+        # debug builds: a terminator thread fails to start; the context is left open (a warning is written) and
+        # neither the destructor nor module shutdown waits for it
+        hash<auto> res = runChild("threadfail", sprintf("*ZContext ctx = new ZContext();\n"
+            "{\n"
+            "    ZSocketPush s(ctx);\n"
+            "    s.setOption(ZMQ_LINGER, 3000);\n"
+            "    s.connect(%y);\n"
+            "    s.send(\"pending\");\n"
+            "}\n"
+            "int start = clock_get_monotonic_us();\n"
+            "delete ctx;\n"
+            "printf(\"destructor: %%d ms\\n\", (clock_get_monotonic_us() - start) / 1000);\n", endpoint("nobody2")),
+            {"QORE_ZMQ_TEST_TERMINATOR_THREAD_FAILURE": "1"});
+        have_hooks = (res.output =~ /cannot start a thread to terminate a context/);
+        if (!have_hooks) {
+            testSkip("the test hooks need a debug build of the module");
+        }
+        *list<*string> m = (res.output =~ x/destructor: ([0-9]+) ms/);
+        assertTrue(m[0].toInt() < MaxDestructorMs, res.output);
+        # the abandoned context is not waited for at module shutdown
+        assertTrue(res.ms < 3000, sprintf("the child exited after %d ms", res.ms));
+    }
+
+    infiniteLingerCapped() {
+        if (!have_hooks) {
+            testSkip("the test hooks need a debug build of the module");
+        }
+        # an infinite linger period is waited for at module shutdown only up to the cap (shortened by a test hook)
+        hash<auto> res = runChild("infinite", sprintf("ZContext ctx();\n"
+            "ZSocketPush s(ctx);\n"
+            "s.setOption(ZMQ_LINGER, -1);\n"
+            "s.connect(%y);\n"
+            "s.send(\"pending\");\n", endpoint("nobody3")), {"QORE_ZMQ_TEST_INFINITE_LINGER_CAP_MS": "1500"});
+        assertEq("", trim(res.output));
+        assertTrue(res.ms >= 1000, sprintf("the child exited after %d ms", res.ms));
+        assertTrue(res.ms < 30000, sprintf("the child exited after %d ms", res.ms));
+    }
+}

@@ -57,6 +57,29 @@ DLLLOCAL int qore_zmq_poll(zmq_pollitem_t* items, int nitems, int timeout_ms, co
 //! returns the monotonic deadline in microseconds for a timeout in milliseconds, or -1 for a negative timeout
 DLLLOCAL int64 qore_zmq_deadline(int timeout_ms);
 
+//! the default timeout of sockets, in milliseconds, and the default linger period of sockets of a blocky context
+#define ZSOCK_TIMEOUT_MS 120000
+
+//! Terminates a context in the calling thread; every socket of the context must be closed
+/** zmq_ctx_term() returns when the closed sockets have delivered their pending messages or their linger periods have
+    expired
+*/
+DLLLOCAL void qore_zmq_ctx_term(void* ctx);
+
+//! Terminates a context whose closed sockets may still have pending messages, without waiting in the calling thread
+/** The context is terminated in a terminator thread, so that the caller (an object destructor) returns at once while
+    pending messages are delivered within their linger periods; module shutdown waits for running terminators until
+    their shutdown deadlines.  If a terminator thread cannot be started, the context is left open until the process
+    exits (a warning is written to stderr): a destructor never waits for the network.
+
+    @param ctx the context; every socket of the context must be closed
+    @param shutdown_deadline the monotonic time in microseconds until which module shutdown waits for the context
+*/
+DLLLOCAL void qore_zmq_terminate_context(void* ctx, int64 shutdown_deadline);
+
+//! Returns the time that module shutdown waits for a closed socket with an infinite linger period, in milliseconds
+DLLLOCAL int qore_zmq_infinite_linger_cap_ms();
+
 //! returns the milliseconds until the given deadline (0 if it has passed), or -1 if there is no deadline (-1)
 DLLLOCAL int qore_zmq_remaining_ms(int64 deadline);
 

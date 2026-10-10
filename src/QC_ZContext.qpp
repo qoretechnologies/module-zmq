@@ -31,13 +31,18 @@
 */
 ///@{
 //! Fix blocky behavior
-/** When ZMQ_BLOCKY is set to false, all new sockets are given a linger timeout of zero.
+/** When ZMQ_BLOCKY is set to false, all new sockets are given a linger timeout of zero, so that pending messages
+    are discarded when a socket is closed.
 
-    By default the context will block indefinitely in the destructor (which calls <tt>zmq_ctx_term()</tt>).
+    By default (ZMQ_BLOCKY true) new sockets are given a linger timeout of 2 minutes (see @ref Qore::ZMQ::ZMQ_LINGER
+    "ZMQ_LINGER"): the pending messages of a closed socket are delivered within it, also after the context has been
+    destroyed (see @ref Qore::ZMQ::ZContext "ZContext").
 
-    The assumption behind this behavior is that abrupt termination will cause message loss. Most real applications use some form of handshaking to ensure applications receive termination messages, and then terminate the context with ZMQ_LINGER set to zero on all sockets. This setting is an easier way to get the same result; when ZMQ_BLOCKY is set to False, all new sockets are given a linger timeout of zero.
+    Most real applications use some form of handshaking to ensure applications receive termination messages, and then
+    terminate the context with ZMQ_LINGER set to zero on all sockets. This setting is an easier way to get the same
+    result; when ZMQ_BLOCKY is set to False, all new sockets are given a linger timeout of zero.
 
-    You must still close all sockets before deleting the ZContext.
+    @note This option only applies to sockets created after it is set
  */
 const ZMQ_BLOCKY = ZMQ_BLOCKY;
 
@@ -68,7 +73,21 @@ const ZMQ_MAX_SOCKETS = ZMQ_MAX_SOCKETS;
 // FIXME add ZMQ_THREAD_SCHED_POLICY and ZMQ_THREAD_PRIORITY if they can be supported in a system-independent way
 
 //! The ZContext class implements a ZeroMQ context
-/** The context is terminated in the destructor
+/** The context is terminated when the ZContext object has been destroyed and its last socket is closed (each socket
+    keeps its context).
+
+    The pending messages of a closed socket are delivered within the socket's linger period (see
+    @ref Qore::ZMQ::ZMQ_LINGER "ZMQ_LINGER"; 2 minutes by default), also after the context has been destroyed, but
+    destroying a context never waits for them: a context whose closed sockets may still have pending messages is
+    terminated in a background thread, and a destructor returns at once.  When the zmq module is unloaded at the end
+    of the process (normal program exit), it waits for these messages until their linger periods have expired; an
+    infinite linger period (-1) is waited for for at most 2 minutes after the socket was closed.  If the background
+    thread cannot be started, the context is left open until the process exits, and a warning is written to the
+    standard error output.
+
+    A context whose closed sockets have no pending messages (sockets that have not sent messages, or that have no
+    linger period, ex: in a context with @ref Qore::ZMQ::ZMQ_BLOCKY "ZMQ_BLOCKY" set to False) is terminated in the
+    destructor, so its endpoints are released when the destructor returns.
  */
 qclass ZContext [arg=QoreZContext* ctx; ns=Qore::ZMQ; dom=NETWORK];
 

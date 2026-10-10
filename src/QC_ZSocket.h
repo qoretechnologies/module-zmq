@@ -37,8 +37,6 @@
 #define ZSOCK_NOCHECK 1
 #endif
 
-// default timeout value: 2 minutes
-#define ZSOCK_TIMEOUT_MS 120000
 
 class QoreZSock : public AbstractZmqThreadLocalData {
 public:
@@ -141,6 +139,14 @@ public:
         return send_timeout_ms.load(std::memory_order_relaxed);
     }
 
+    //! Records that the socket may have sent messages
+    /** Only a socket that has sent messages can have pending messages when it is closed, so only its linger period
+        affects the termination of its context
+    */
+    DLLLOCAL void markSent() {
+        sent.store(true, std::memory_order_relaxed);
+    }
+
     //! returns the socket type code
     virtual int getType() const = 0;
 
@@ -149,7 +155,17 @@ public:
 
 protected:
     DLLLOCAL virtual ~QoreZSock() {
-        zmq_close(sock);
+        if (sock) {
+            // the context's termination waits for the pending messages of its closed sockets within their linger
+            // periods; an unknown linger period is taken as infinite
+            int linger = -1;
+            size_t len = sizeof linger;
+            if (zmq_getsockopt(sock, ZMQ_LINGER, &linger, &len)) {
+                linger = -1;
+            }
+            ctx->socketClosed(sent.load(std::memory_order_relaxed) ? linger : 0);
+            zmq_close(sock);
+        }
         // the context is terminated when it has been deleted and its last socket is closed
         ctx->deref();
     }
@@ -166,6 +182,13 @@ protected:
         v = ZSOCK_TIMEOUT_MS;
         zmq_setsockopt(sock, ZMQ_CONNECT_TIMEOUT, &v, sizeof v);
 #endif
+        // a socket of a blocky context (the default) lingers for the default timeout instead of indefinitely (libzmq's
+        // default), so that its pending messages are delivered within it; a non-blocky context gives its sockets no
+        // linger period
+        if (zmq_ctx_get(**ctx, ZMQ_BLOCKY) > 0) {
+            v = ZSOCK_TIMEOUT_MS;
+            zmq_setsockopt(sock, ZMQ_LINGER, &v, sizeof v);
+        }
     }
 
     void* sock = nullptr;
@@ -179,6 +202,9 @@ protected:
 
     //! Cached send timeout for thread-safe sockets; updated by every ZMQ_SNDTIMEO update in setSocketOption()
     std::atomic<int> send_timeout_ms{ZSOCK_TIMEOUT_MS};
+
+    //! true if the socket may have sent messages (see markSent())
+    std::atomic<bool> sent{false};
 };
 
 class QoreZSockBind : public QoreZSock {

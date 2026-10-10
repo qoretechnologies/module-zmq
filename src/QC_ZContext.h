@@ -28,6 +28,8 @@
 
 #include "zmq-module.h"
 
+#include <atomic>
+
 class QoreZContext : public AbstractPrivateData {
 public:
     // creates the object
@@ -42,19 +44,33 @@ public:
         return ctx;
     }
 
+    //! Records the linger period of a socket of the context that is being closed
+    /** A closed socket's pending messages are delivered within its linger period, which starts when it is closed;
+        terminating the context waits for them
+
+        @param linger_ms the socket's ZMQ_LINGER value in milliseconds; -1 for an infinite linger period
+    */
+    DLLLOCAL void socketClosed(int linger_ms);
+
 protected:
-    DLLLOCAL virtual ~QoreZContext() {
-        while (true) {
-            int rc = zmq_ctx_term(ctx);
-            if (rc && errno == EINTR) {
-                continue;
-            }
-            break;
-        }
-    }
+    //! Terminates the context without waiting for the pending messages of its closed sockets
+    /** see qore_zmq_terminate_context()
+    */
+    DLLLOCAL virtual ~QoreZContext();
 
 private:
     void* ctx;
+    //! the monotonic time in microseconds until which a closed socket can have pending messages; 0 = none
+    std::atomic<int64> linger_deadline{0};
+    //! the monotonic time in microseconds until which module shutdown waits for the pending messages
+    std::atomic<int64> shutdown_deadline{0};
+
+    //! Sets an atomic to a value if it is greater
+    DLLLOCAL static void setMax(std::atomic<int64>& a, int64 v) {
+        int64 cur = a.load();
+        while (cur < v && !a.compare_exchange_weak(cur, v)) {
+        }
+    }
 };
 
 DLLLOCAL extern QoreClass* QC_ZCONTEXT;
