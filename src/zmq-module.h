@@ -35,6 +35,25 @@
 
 DLLLOCAL void zmq_error(ExceptionSink* xsink, const char* err, const char* desc_fmt, ...);
 
+//! returned by qore_zmq_poll() when an exception has been raised (THREAD-CANCELLED or PROGRAM-INTERRUPTED)
+#define QORE_ZMQ_POLL_CANCELLED -2
+
+//! polls ZeroMQ items like zmq_poll(), ending the wait as soon as the thread is cancelled or its Program interrupted
+/** The thread's cancellation wakeup descriptor is polled with the items, so a cancellation request ends the wait at
+    once; EINTR is retried for the rest of the timeout
+
+    @param items the items to poll
+    @param nitems the number of items
+    @param timeout_ms the timeout in milliseconds; negative for no timeout
+    @param operation the operation named in the cancellation exception
+    @param xsink for the cancellation exception
+
+    @return the number of items with events, 0 if the timeout expired, -1 if zmq_poll() failed (errno is set), or
+    @ref QORE_ZMQ_POLL_CANCELLED if an exception was raised
+*/
+DLLLOCAL int qore_zmq_poll(zmq_pollitem_t* items, int nitems, int timeout_ms, const char* operation,
+        ExceptionSink* xsink);
+
 // for hashdecls
 DLLLOCAL extern const TypedHashDecl* hashdeclZmqVersionInfo;
 DLLLOCAL extern const TypedHashDecl* hashdeclZmqPollInfo;

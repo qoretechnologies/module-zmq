@@ -6,6 +6,14 @@
 
     @section zmq_1_2_0 zmq Module Version 1.2.0
 
+    - a thread waiting in @ref Qore::ZMQ::ZSocket::poll() "ZSocket::poll()",
+      @ref Qore::ZMQ::ZSocket::waitRead() "ZSocket::waitRead()", or
+      @ref Qore::ZMQ::ZSocket::waitWrite() "ZSocket::waitWrite()" ends the wait as soon as it is cancelled or its
+      %Qore \c Program is interrupted; @ref Qore::ZMQ::ZSocket::poll() "ZSocket::poll()" could not be interrupted
+      before, and the other waits ended only up to half a second after the request
+    - fixed binding an endpoint with a wildcard port (ex: \c "@tcp://127.0.0.1:*") in a sandboxed \c Program,
+      which failed with \c ZMQ-ENDPOINT-ERROR because the sandbox check resolved the port \c "*" as a service name
+
     - corrected subscription and send-method links and wildcard-address examples
       so the complete reference builds with strict Doxygen checks
 

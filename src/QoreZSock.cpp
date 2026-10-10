@@ -37,9 +37,9 @@
 #include <netdb.h>
 
 // Helper function to parse port string safely
-// Returns port number, or 0 for wildcard/dynamic port
+// Returns port number, or 0 for wildcard/dynamic port ("*" or "!", optionally followed by a port range)
 static int parsePort(const char* port_str) {
-    if (!port_str || !*port_str || *port_str == '*') {
+    if (!port_str || !*port_str || *port_str == '*' || *port_str == '!') {
         return 0;  // Dynamic port
     }
     return atoi(port_str);
@@ -102,17 +102,26 @@ static bool checkTcpUdpAccess(QoreSandboxManager* sm, const char* hostport, int 
         }
     }
 
-    // Resolve hostname
+    // Resolve hostname; the port is set in the addresses resolved, as the port of a ZeroMQ endpoint can be a
+    // wildcard ("*" or "!", optionally with a range) that getaddrinfo() does not accept as a service
     struct addrinfo hints, *res;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = (proto == QSEC_NET_TCP) ? SOCK_STREAM : SOCK_DGRAM;
 
-    int rc = getaddrinfo(host.c_str(), port_str, &hints, &res);
+    int rc = getaddrinfo(host.c_str(), nullptr, &hints, &res);
     if (rc != 0) {
         xsink->raiseException("ZMQ-ENDPOINT-ERROR", "failed to resolve host '%s': %s",
                               host.c_str(), gai_strerror(rc));
         return false;
+    }
+    int port = parsePort(port_str);
+    for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {
+        if (ai->ai_family == AF_INET) {
+            reinterpret_cast<struct sockaddr_in*>(ai->ai_addr)->sin_port = htons(port);
+        } else if (ai->ai_family == AF_INET6) {
+            reinterpret_cast<struct sockaddr_in6*>(ai->ai_addr)->sin6_port = htons(port);
+        }
     }
 
     // Check access for resolved addresses
@@ -213,43 +222,21 @@ int QoreZSock::poll(short events, int timeout_ms, const char* meth, ExceptionSin
         return -1;
 
     zmq_pollitem_t p = { sock, 0, events, 0 };
-    int rc;
-
-    const int poll_interval_ms = 500;  // 500ms polling interval for interrupt checks
-    int64_t remaining_ms = timeout_ms;
-    bool infinite = (timeout_ms < 0);
-
-    while (true) {
-        // Check for interrupt
-        if (qore_check_cancel(xsink, "ZeroMQ connect")) {
-            return -1;
-        }
-
-        // Calculate effective timeout for this iteration
-        int effective_timeout = infinite ? poll_interval_ms :
-            (remaining_ms > poll_interval_ms ? poll_interval_ms : static_cast<int>(remaining_ms));
-
-        rc = zmq_poll(&p, 1, effective_timeout);
-        if (rc == -1 && errno == EINTR)
-            continue;
-        if (rc > 0)
-            return 0;  // Success - data available
-        if (rc == -1) {
-            zmq_error(xsink, "ZSOCKET-TIMEOUT", "error in zmq_poll() in %s()", meth);
-            return -1;
-        }
-
-        // rc == 0: timeout on this iteration
-        if (!infinite) {
-            remaining_ms -= effective_timeout;
-            if (remaining_ms <= 0) {
-                xsink->raiseException("ZSOCKET-TIMEOUT", "timeout waiting %d ms in %s() for data%s on the socket",
-                    timeout_ms, meth, events & ZMQ_POLLOUT ? " to be sent" : "");
-                return -1;
-            }
-        }
-        // Continue polling (infinite timeout or time remaining)
+    // the wait ends at once when the thread is cancelled or its Program is interrupted
+    int rc = qore_zmq_poll(&p, 1, timeout_ms, meth, xsink);
+    if (rc == QORE_ZMQ_POLL_CANCELLED) {
+        return -1;
     }
+    if (rc < 0) {
+        zmq_error(xsink, "ZSOCKET-TIMEOUT", "error in zmq_poll() in %s()", meth);
+        return -1;
+    }
+    if (!rc) {
+        xsink->raiseException("ZSOCKET-TIMEOUT", "timeout waiting %d ms in %s() for data%s on the socket",
+            timeout_ms, meth, events & ZMQ_POLLOUT ? " to be sent" : "");
+        return -1;
+    }
+    return 0;
 }
 
 // like czmq's zsock_attach()

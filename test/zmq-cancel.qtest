@@ -1,0 +1,142 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# Copyright (C) 2026 Qore Technologies, s.r.o.
+
+%modern
+
+%prepend-module-path ${SCRIPT_DIR}/../build
+%requires QUnit
+%requires zmq
+
+%exec-class ZmqCancelTest
+
+# A thread blocked waiting for a ZeroMQ socket must end the wait as soon as it is cancelled or its Program is
+# interrupted, whatever the timeout of the wait.
+class ZmqCancelTest inherits QUnit::Test {
+    private {
+        #! the longest time in microseconds that a cancelled wait may take to end
+        const MaxCancelUs = 2000000;
+        #! the timeout of the waits, much longer than MaxCancelUs
+        const WaitTimeout = 30s;
+    }
+
+    constructor() : Test("ZmqCancelTest", "1.0", \ARGV) {
+        addTestCase("a cancelled thread ends ZSocket::poll()", \cancelStaticPoll());
+        addTestCase("a cancelled thread ends ZSocket::waitRead()", \cancelWaitRead());
+        addTestCase("an interrupted Program ends ZSocket::poll()", \interruptStaticPoll());
+        addTestCase("the timeout still ends a wait", \pollTimeout());
+        addTestCase("a sandboxed Program binds a wildcard port", \sandboxedWildcardBind());
+        set_return_value(main());
+    }
+
+    #! runs the given wait in a thread, cancels the thread, and returns the exception and the time to the end
+    private hash<auto> cancelWait(code wait) {
+        Queue started();
+        Queue done();
+        int tid = background sub () {
+            hash<auto> rv;
+            try {
+                # the sockets belong to the thread that creates them
+                ZContext zctx();
+                ZSocketPull reader(zctx, "@tcp://127.0.0.1:*");
+                started.push(True);
+                wait(reader);
+                rv.err = "NONE";
+            } catch (hash<ExceptionInfo> ex) {
+                rv.err = ex.err;
+                rv.desc = ex.desc;
+            }
+            rv.end = clock_get_monotonic_us();
+            done.push(rv);
+        }();
+        started.get();
+        int start = clock_get_monotonic_us();
+        cancel_thread(tid, "zmq cancel test");
+        hash<auto> rv = done.get();
+        rv.us = rv.end - start;
+        return rv;
+    }
+
+    cancelStaticPoll() {
+        hash<auto> rv = cancelWait(sub (ZSocketPull reader) {
+            ZSocket::poll((<ZmqPollInfo>{"socket": reader, "events": ZMQ_POLLIN},), WaitTimeout);
+        });
+        assertEq("THREAD-CANCELLED", rv.err, rv.desc);
+        assertLt(MaxCancelUs, rv.us, "the cancellation ends the wait at once");
+    }
+
+    cancelWaitRead() {
+        hash<auto> rv = cancelWait(sub (ZSocketPull reader) {
+            reader.waitRead(WaitTimeout);
+        });
+        assertEq("THREAD-CANCELLED", rv.err, rv.desc);
+        assertLt(MaxCancelUs, rv.us, "the cancellation ends the wait at once");
+    }
+
+    interruptStaticPoll() {
+        SandboxManager sm();
+        sm.setNetworkDefaultPolicy(True);
+        Program p(PO_NEW_STYLE);
+        p.setSandboxManager(sm);
+        p.loadModule("zmq");
+        p.parse(sprintf("sub run(Queue started) { ZContext zctx(); ZSocketPull reader(zctx, \"@tcp://127.0.0.1:*\"); "
+            "started.push(True); ZSocket::poll((<ZmqPollInfo>{\"socket\": reader, \"events\": ZMQ_POLLIN},), %d); }",
+            WaitTimeout.durationMilliseconds()), "zmq-interrupt");
+        Queue started();
+        Queue done();
+        background sub () {
+            hash<auto> rv;
+            try {
+                p.callFunction("run", started);
+                rv.err = "NONE";
+            } catch (hash<ExceptionInfo> ex) {
+                rv.err = ex.err;
+                rv.desc = ex.desc;
+                # the wait was not reached if the call failed before it
+                started.push(False);
+            }
+            rv.end = clock_get_monotonic_us();
+            done.push(rv);
+        }();
+        assertTrue(started.get(), "the sandboxed Program reaches the wait");
+        int start = clock_get_monotonic_us();
+        sm.requestInterrupt();
+        hash<auto> rv = done.get();
+        assertEq("PROGRAM-INTERRUPTED", rv.err, rv.desc);
+        assertLt(MaxCancelUs, rv.end - start);
+    }
+
+    sandboxedWildcardBind() {
+        # the port of an endpoint can be a wildcard, which the sandbox check resolves as a dynamic port
+        foreach bool allow in (True, False) {
+            SandboxManager sm();
+            sm.setNetworkDefaultPolicy(allow);
+            Program p(PO_NEW_STYLE);
+            p.setSandboxManager(sm);
+            p.loadModule("zmq");
+            p.parse("string sub run(string endpoint) { ZContext zctx(); ZSocketPull reader(zctx, endpoint); "
+                "return reader.endpoint(); }", "zmq-sandbox-bind");
+            foreach string endpoint in ("@tcp://127.0.0.1:*", "@tcp://localhost:*") {
+                if (allow) {
+                    assertRegex("^tcp://127\\.0\\.0\\.1:[0-9]+$", p.callFunction("run", endpoint), endpoint);
+                } else {
+                    assertThrows("NETWORK-ACCESS-DENIED", \p.callFunction(), ("run", endpoint), endpoint);
+                }
+            }
+        }
+    }
+
+    pollTimeout() {
+        ZContext zctx();
+        ZSocketPull reader(zctx, "@tcp://127.0.0.1:*");
+        int start = clock_get_monotonic_us();
+        assertEq((), ZSocket::poll((<ZmqPollInfo>{"socket": reader, "events": ZMQ_POLLIN},), 200ms));
+        int us = clock_get_monotonic_us() - start;
+        assertGe(200000, us, "the timeout is applied");
+        assertLt(200000 + MaxCancelUs, us);
+        start = clock_get_monotonic_us();
+        assertThrows("ZSOCKET-TIMEOUT", \reader.waitRead(), 200ms);
+        us = clock_get_monotonic_us() - start;
+        assertGe(200000, us, "the timeout is applied");
+    }
+}

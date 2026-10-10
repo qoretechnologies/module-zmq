@@ -3200,10 +3200,12 @@ static list<hash<ZmqPollInfo>> ZSocket::poll(list<hash<ZmqPollInfo>> items, time
     }
 
     while (true) {
-        int rc = zmq_poll(pitem, items->size(), timeout_ms);
+        // the wait ends at once when the thread is cancelled or its Program is interrupted
+        int rc = qore_zmq_poll(pitem, items->size(), timeout_ms, "ZSocket::poll", xsink);
+        if (rc == QORE_ZMQ_POLL_CANCELLED) {
+            return QoreValue();
+        }
         if (rc < 0) {
-            if (errno == EINTR)
-                continue;
             zmq_error(xsink, "ZSOCKET-POLL-ERROR", "error polling %d socket%s", (int)items->size(), items->size() == 1 ? "" : "s");
             return QoreValue();
         }
