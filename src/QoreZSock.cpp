@@ -160,7 +160,7 @@ static bool checkTcpUdpAccess(QoreSandboxManager* sm, const char* hostport, int 
 // Helper function to check network access for ZMQ endpoints
 // Returns true if access is allowed, false if denied (exception raised)
 static bool checkZmqNetworkAccess(const char* endpoint, bool is_bind, ExceptionSink* xsink) {
-    QoreSandboxManagerHelper smh;
+    QoreSandboxManagerHelper smh(QoreSandboxManagerHelper::Policy);
     if (!smh) {
         return true;  // No sandbox manager, allow all access
     }
