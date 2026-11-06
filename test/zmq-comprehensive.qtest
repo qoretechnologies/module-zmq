@@ -56,6 +56,7 @@ class ZmqComprehensiveTest inherits QUnit::Test {
         addTestCase("negative: out of range option value", \negativeOutOfRangeOptionTest());
         addTestCase("negative: null endpoint", \negativeNullEndpointTest());
         addTestCase("negative: empty endpoint operations", \negativeEmptyEndpointTest());
+        addTestCase("negative: percent characters in endpoint errors", \negativePercentEndpointTest());
 
         # Negative tests - Protocol Violations
         addTestCase("negative: REQ double send", \negativeReqDoubleSendTest());
@@ -250,6 +251,15 @@ class ZmqComprehensiveTest inherits QUnit::Test {
 
         # Empty disconnect should fail
         assertThrows("ZSOCKET-DISCONNECT-ERROR", \sock.disconnect(), "");
+    }
+
+    negativePercentEndpointTest() {
+        ZSocketPush sock(zctx);
+        string endpoint = "inproc://missing-%s-%n-%%";
+
+        # Error descriptions must preserve endpoint text without interpreting it as a format string.
+        assertThrows("ZSOCKET-UNBIND-ERROR", endpoint, \sock.unbind(), ("%s", endpoint));
+        assertThrows("ZSOCKET-DISCONNECT-ERROR", endpoint, \sock.disconnect(), ("%s", endpoint));
     }
 
     # ==================== Negative Tests - Protocol Violations ====================

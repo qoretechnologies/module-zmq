@@ -3227,7 +3227,7 @@ static list<hash<ZmqPollInfo>> ZSocket::poll(list<hash<ZmqPollInfo>> items, time
 
     PrivateDataListHolder<QoreZSock> pdlh(xsink);
 
-    zmq_pollitem_t pitem[items->size()];
+    std::vector<zmq_pollitem_t> pitem(items->size());
     ConstListIterator li(items);
     while (li.next()) {
         if (li.index() && !(li.index() % 100) && qore_check_cancel(xsink, "ZSocket poll preparation"))
@@ -3254,7 +3254,7 @@ static list<hash<ZmqPollInfo>> ZSocket::poll(list<hash<ZmqPollInfo>> items, time
 
     while (true) {
         // the wait ends at once when the thread is cancelled or its Program is interrupted
-        int rc = qore_zmq_poll(pitem, items->size(), timeout_ms, "ZSocket::poll", xsink);
+        int rc = qore_zmq_poll(pitem.data(), items->size(), timeout_ms, "ZSocket::poll", xsink);
         if (rc == QORE_ZMQ_POLL_CANCELLED) {
             return QoreValue();
         }

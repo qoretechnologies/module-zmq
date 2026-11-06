@@ -261,7 +261,7 @@ int i = frame.readi2(0);
 int ZFrame::readi2(int offset) [flags=NAMED_ARGS] {
     size_t size = zframe_size(**frame);
     if (offset < 0 || (size < 2) || ((size_t)offset > (size - 2))) {
-        xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 2 bytes from byte offset " QLLD "; frame size: " QLLD, offset, size);
+        xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 2 bytes from byte offset " QLLD "; frame size: %zu", offset, size);
         return QoreValue();
     }
 
@@ -289,7 +289,7 @@ int i = frame.readi4(0);
 int ZFrame::readi4(int offset) [flags=NAMED_ARGS] {
     size_t size = zframe_size(**frame);
     if (offset < 0 || (size < 4) || ((size_t)offset > (size - 4))) {
-        xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 4 bytes from byte offset " QLLD "; frame size: " QLLD, offset, size);
+        xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 4 bytes from byte offset " QLLD "; frame size: %zu", offset, size);
         return QoreValue();
     }
 
@@ -317,7 +317,7 @@ int i = frame.readi2N(0);
 int ZFrame::readi2N(int offset) [flags=NAMED_ARGS] {
     size_t size = zframe_size(**frame);
     if (offset < 0 || (size < 2) || ((size_t)offset > (size - 2))) {
-        xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 2 bytes from byte offset " QLLD "; frame size: " QLLD, offset, size);
+        xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 2 bytes from byte offset " QLLD "; frame size: %zu", offset, size);
         return QoreValue();
     }
 
@@ -345,7 +345,7 @@ int i = frame.readi4N(0);
 int ZFrame::readi4N(int offset) [flags=NAMED_ARGS] {
     size_t size = zframe_size(**frame);
     if (offset < 0 || (size < 4) || ((size_t)offset > (size - 4))) {
-        xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 4 bytes from byte offset " QLLD "; frame size: " QLLD, offset, size);
+        xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 4 bytes from byte offset " QLLD "; frame size: %zu", offset, size);
         return QoreValue();
     }
 
@@ -371,7 +371,7 @@ int i = frame.readi8N(0);
 int ZFrame::readi8N(int offset) [flags=NAMED_ARGS] {
     size_t size = zframe_size(**frame);
     if (offset < 0 || (size < 8) || ((size_t)offset > (size - 8))) {
-        xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 8 bytes from byte offset " QLLD "; frame size: " QLLD, offset, size);
+        xsink->raiseException("ZFRAME-READ-ERROR", "cannot read 8 bytes from byte offset " QLLD "; frame size: %zu", offset, size);
         return QoreValue();
     }
 
