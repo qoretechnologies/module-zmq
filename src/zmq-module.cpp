@@ -2,7 +2,7 @@
 /*
     Qore zmq module
 
-    Copyright (C) 2017 - 2021 Qore Technologies, s.r.o.
+    Copyright (C) 2017 - 2026 Qore Technologies, s.r.o.
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -74,6 +74,9 @@ DLLLOCAL QoreClass* initZSocketDishClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initZFrameClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initZMsgClass(QoreNamespace& ns);
 
+// the module's namespace; purged when the module is deleted (see QoreModuleInfo::ns)
+QoreNamespace zmqns("Qore::ZMQ");
+
 extern "C" DLLEXPORT void zmq_qore_module_desc(QoreModuleInfo& mod_info) {
     mod_info.name = "zmq";
     mod_info.version = PACKAGE_VERSION;
@@ -85,14 +88,16 @@ extern "C" DLLEXPORT void zmq_qore_module_desc(QoreModuleInfo& mod_info) {
     mod_info.init = zmq_module_init;
     mod_info.ns_init = zmq_module_ns_init;
     mod_info.del = zmq_module_delete;
+#ifdef QORE_HAS_MODULE_NS_PURGE
+    // the namespace is purged when the module is deleted, before the types are freed (see QoreModuleInfo::ns)
+    mod_info.ns = &zmqns;
+#endif
     mod_info.license = QL_LGPL;
     mod_info.license_str = "LGPL-2.1-or-later";
 }
 
 DLLLOCAL void init_zmq_functions(QoreNamespace& ns);
 DLLLOCAL void init_zmq_constants(QoreNamespace& ns);
-
-QoreNamespace zmqns("Qore::ZMQ");
 
 static void zmq_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink) {
     zmqns.addSystemClass(initZContextClass(zmqns));
