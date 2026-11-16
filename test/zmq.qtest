@@ -653,7 +653,23 @@ class ZmqTest inherits QUnit::Test {
             assertEq("", idframe.meta("Identity"));
         }
         #printf("id frame: %y\n", idframe.strhex());
-        assertThrows("ZFRAME-DECODE-ERROR", \idframe.decode());
+        # ZFrame::decode() decodes a frame that holds a serialized message (a size byte and that many data bytes for each
+        # frame): the generated routing id (a 0 byte and a 32 bit big-endian counter of the connections made) is a valid
+        # serialized message for some counter values (0, and 256 and up in part: 00 00 00 01 00 is three empty frames and
+        # one of one byte) and not for others (1: 00 00 00 00 01), so decoding the generated id cannot test the error:
+        # the frames below are built from known bytes
+        ZFrame invalid(<0000000005>);
+        assertThrows("ZFRAME-DECODE-ERROR", \invalid.decode());
+        ZFrame counter1(<0000000001>);
+        assertThrows("ZFRAME-DECODE-ERROR", \counter1.decode());
+        ZFrame valid(<0241420000>);
+        ZMsg decoded = valid.decode();
+        assertEq(3, decoded.size());
+        ZFrame first = decoded.popFrame();
+        assertEq(2, first.size());
+        assertTrue(first.streq("AB"));
+        ZFrame counter256(<0000000100>);
+        assertEq(4, counter256.decode().size());
 
         assertEq(HelloWorld.size(), msg.contentSize());
         if (HAVE_ZFRAME_META) {
