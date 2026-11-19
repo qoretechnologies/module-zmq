@@ -5,7 +5,6 @@
     @tableofcontents
 
     @section zmq_1_2_0 zmq Module Version 1.2.0
-
     - destroying a @ref Qore::ZMQ::ZContext "ZContext" never waits for the pending messages of its closed sockets:
       they are delivered in the background within each socket's linger period, and at the end of the process the
       module waits for them until the linger periods expire (an infinite linger period for at most 2 minutes);
@@ -25,10 +24,6 @@
       or its %Qore \c Program is interrupted; @ref Qore::ZMQ::ZSocket::poll() "ZSocket::poll()",
       @ref Qore::ZMQ::ZSocket::recvFrame() "ZSocket::recvFrame()", and the \c tryRecv*() methods could not be
       interrupted before, and the other waits ended only up to half a second after the request
-    - fixed binding an endpoint with a wildcard port (ex: \c "@tcp://127.0.0.1:*") in a sandboxed \c Program,
-      which failed with \c ZMQ-ENDPOINT-ERROR because the sandbox check resolved the port \c "*" as a service name
-    - a bind or connect that the sandbox denies raises the denial of the address, and no longer reports an
-      unhandled exception for each address denied
     - the \c send() methods of @ref Qore::ZMQ::ZSocket "ZSocket" wait until the socket can queue the message, up to
       the send timeout, and end as soon as the thread is cancelled or its %Qore \c Program is interrupted; they could
       not be interrupted before.  A send on a @ref Qore::ZMQ::ZSocketServer "ZSocketServer" whose peer cannot accept
@@ -40,8 +35,6 @@
     - fixed deleting a @ref Qore::ZMQ::ZContext "ZContext" while its sockets still exist: the thread blocked
       forever; the sockets keep their context, and it is terminated when its last socket is closed
 
-    - corrected subscription and send-method links and wildcard-address examples
-      so the complete reference builds with strict Doxygen checks
 
     <b>New Features and Enhancements:</b>
     - Added @ref Qore::ZMQ::ZSocketClient "ZSocketClient" class - thread-safe CLIENT socket implementation
@@ -62,7 +55,6 @@
     - Build with \c -DQORE_BUILD_ZMQ_DRAFT=1 to enable draft API support
     - These sockets are thread-safe and can be shared across threads without external locking
 
-    @section zmq_1_1_0 zmq Module Version 1.1.0
     <b>New Features and Enhancements:</b>
     - Added support for interruptible I/O for graceful termination of sandboxed programs; poll
       and receive operations use 500ms polling intervals with interrupt checks when a sandbox
@@ -91,7 +83,7 @@
     @section zmq_1_0_1 zmq Module Version 1.0.1
     - fixed a crash with newer versions of ZeroMQ where \c zmq_ctx_destroy() cannot be called after \c zmq_ctx_term()
       as it will cause a core dump
-      (<a href="https://github.com/qorelanguage/qore/issues/4446">issue 4446</a>)
+      (<a href="https://github.com/qoretechnologies/qore/issues/4446">issue 4446</a>)
 
     @section zmq_1_0 zmq Module Version 1.0
     - initial release
